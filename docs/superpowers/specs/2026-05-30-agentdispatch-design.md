@@ -101,9 +101,9 @@ npx @agentdispatch/setup
 
 安装完成后 `source ~/.zshrc` 或新开终端即生效。
 
-**不需要用户输入任何信息。** API Key 从两个来源自动获取：
-- **同 provider 路由**：直接复用原始请求 header 中的 key（Codex 自带的 OpenAI key、Claude Code 自带的 Anthropic key），零配置
-- **跨 provider 路由**：自动检测环境变量（如 `DEEPSEEK_API_KEY`），有就纳入路由候选，没有就不路由，不报错
+**不需要用户输入任何信息，不需要管理 API Key。**
+
+核心场景是**同 provider 内路由**：Codex 请求里的 OpenAI key 直接复用，Claude Code 请求里的 Anthropic key 直接复用。Hook 只改写 `model` 字段，URL 和 key 原样转发。
 
 ### 3.2 Shell Function（替代 alias）
 
@@ -125,31 +125,15 @@ function 比 alias 的优势：
 - `command codex` 避免递归调用
 - 可以在函数内扩展逻辑（如检测更新）
 
-### 3.3 API Key 自动发现
+### 3.3 跨 Provider 路由（高级功能，可选）
 
-Hook 运行时自动发现可用的 provider key：
+核心路由在同 provider 内完成（零配置）。如果用户还想跨 provider 路由（如 Codex 请求路由到 DeepSeek），只需设置对应的环境变量：
 
-```typescript
-// 优先级：请求 header 中的 key > 环境变量中的 key
-function resolveApiKey(provider: string, originalHeaders: Headers): string | undefined {
-  // 1. 原始请求已携带的 key（同 provider 路由时直接复用）
-  const headerKey = extractKeyFromHeaders(originalHeaders, provider);
-  if (headerKey) return headerKey;
-
-  // 2. 环境变量（跨 provider 路由时使用）
-  return keyMap[provider];
-}
-
-// 路由决策时：只推荐有 key 的 provider 的模型
-function getAvailableModels(allModels: ModelEntry[], headers: Headers): ModelEntry[] {
-  return allModels.filter(m => resolveApiKey(m.provider, headers) !== undefined);
-}
+```bash
+export DEEPSEEK_API_KEY=xxx    # Hook 自动检测并纳入路由候选
 ```
 
-用户体验：
-- **只用了 Codex（OpenAI key）**→ 自动在 gpt-5.5 / gpt-5.4 / gpt-5.3-spark 之间路由
-- **同时设了 DEEPSEEK_API_KEY** → 额外纳入 DeepSeek V4-Pro/Flash，跨 provider 路由
-- **什么 key 都没设** → 不会出错，Hook 静默放行所有请求
+没有设置跨 provider key 时，Hook 只在同 provider 的模型间路由，不会报错。
 
 ### 3.4 包结构
 
@@ -666,33 +650,35 @@ globalThis.fetch = async function patchedFetch(input: RequestInfo, init?: Reques
 };
 ```
 
-### 9.2 API Key 自动发现
+### 9.2 API Key 处理原则
 
-Hook 从两个来源自动获取 API Key，不需要用户额外配置：
+Hook 不管理 API Key，只做转发和复用：
+
+**同 provider 路由（核心场景，零配置）**：
+原始请求已包含完整的 URL 和 Authorization header。Hook 只改写 `body.model`，其他原样转发。key 从原始请求自动获取，不需要任何配置。
+
+**跨 provider 路由（高级功能，需要环境变量）**：
+如果推荐模型属于不同 provider，Hook 检查环境变量中是否有对应的 key。有则改写 URL + key 转发；没有则跳过该模型，降级到同 provider 的替代模型。
 
 ```typescript
-// 优先级：原始请求 header 中的 key > 环境变量
-function resolveApiKey(provider: string, originalHeaders: Headers): string | undefined {
-  // 1. 原始请求已携带的 key（同 provider 路由直接复用）
-  const headerKey = extractKeyFromHeaders(originalHeaders, provider);
-  if (headerKey) return headerKey;
+function handleRouting(originalRequest: Request, analysis: StepAnalysis): Request {
+  const targetModel = modelRegistry.get(analysis.recommendedModel);
+  const originalProvider = detectProvider(originalRequest.url);
 
-  // 2. 环境变量（跨 provider 路由时使用）
-  const envMap: Record<string, string | undefined> = {
-    "openai":    process.env.OPENAI_API_KEY,
-    "anthropic": process.env.ANTHROPIC_API_KEY,
-    "deepseek":  process.env.DEEPSEEK_API_KEY,
-    "zhipu":     process.env.ZHIPU_API_KEY,
-    "moonshot":  process.env.MOONSHOT_API_KEY,
-    "alibaba":   process.env.ALIBABA_API_KEY,
-    "xiaomi":    process.env.XIAOMI_API_KEY,
-  };
-  return envMap[provider];
-}
-
-// 路由决策时：只推荐有 key 的 provider 的模型
-function getAvailableModels(models: ModelEntry[], headers: Headers): ModelEntry[] {
-  return models.filter(m => resolveApiKey(m.provider, headers) !== undefined);
+  if (targetModel.provider === originalProvider) {
+    // 同 provider：只改 model 字段，url 和 key 原样保留
+    return rewriteModelOnly(originalRequest, targetModel.api.modelId);
+  } else {
+    // 跨 provider：需要检查环境变量
+    const crossProviderKey = getEnvKey(targetModel.provider);
+    if (crossProviderKey) {
+      return rewriteFullRequest(originalRequest, targetModel, crossProviderKey);
+    } else {
+      // 没有 key → 降级到同 provider 的最便宜模型
+      const fallback = findCheapestModel(originalProvider, analysis.recommendedTier);
+      return rewriteModelOnly(originalRequest, fallback.api.modelId);
+    }
+  }
 }
 ```
 
