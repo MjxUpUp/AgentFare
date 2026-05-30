@@ -1,0 +1,825 @@
+# AgentDispatch — 产品设计文档
+
+> 日期：2026-05-30
+> 状态：已批准
+> 基于：竞品技术验证调研报告、开发者痛点热点分析、Claude Code vs Cursor vs Codex 架构对比
+
+---
+
+## 1. 产品定位与核心价值
+
+**AgentDispatch** — 一个 Node.js Hook + MCP Server，为 AI Coding Agent 提供 per-step 智能模型路由。
+
+**一句话定位**：在 Agent 执行 pipeline 的每一步，自动选择性价比最优的模型，在保证质量的前提下最小化成本。
+
+**核心价值主张**：
+
+- **节省 40-70% 的 API 成本**（60-80% 的 agent 请求不需要最强模型）
+- **零侵入集成**（通过 `NODE_OPTIONS='--require'` Hook 注入，agent 完全无感知）
+- **双市场覆盖**（海外 OpenAI/Anthropic/Google + 中国 DeepSeek/智谱/月之暗面/阿里/小米）
+
+**不是什么**：
+
+- 不是 LLM Gateway（LiteLLM/OpenRouter 已做得很好）
+- 不是可观测性平台（LangSmith/Langfuse 已有）
+- 不是又一个 AI IDE
+
+**为什么我们能做而大厂不会做**：
+
+Anthropic 和 OpenAI 卖 token，自动路由到便宜模型 = 主动减少收入。这个利益冲突不会消失。第三方工具是唯一有正确激励做 per-step 自动路由的参与者。
+
+---
+
+## 2. 整体架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                 @agentdispatch/hook                      │
+│  (NODE_OPTIONS='--require' 注入到 codex / claude 进程)   │
+│                                                         │
+│  拦截 fetch → 分析请求 → 路由模型 → 记录成本 → 放行     │
+│  透明、无感、不需要 prompt 引导                          │
+│  负责：per-step 透明路由 + cost tracking                 │
+├─────────────────────────────────────────────────────────┤
+│                 @agentdispatch/core                      │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │          Step Analyzer (步骤分析器)              │    │
+│  │  输入: messages / model / tools                 │    │
+│  │  输出: 步骤类型 + 难度 + 推荐模型               │    │
+│  └──────────────────────┬──────────────────────────┘    │
+│  ┌──────────────────────▼──────────────────────────┐    │
+│  │         Combo Optimizer (组合优化器)             │    │
+│  │  输入: pipeline + 候选模型池 + 偏好             │    │
+│  │  输出: Pareto 最优模型组合                      │    │
+│  │  算法: arm_elimination / epsilon_lucb / ...     │    │
+│  └──────────────────────┬──────────────────────────┘    │
+│  ┌──────────────────────▼──────────────────────────┐    │
+│  │         Model Registry (模型注册表)             │    │
+│  │  海外 + 中国模型定价、能力、API 兼容性          │    │
+│  │  远程数据更新，24h 缓存                         │    │
+│  └──────────────────────┬──────────────────────────┘    │
+│  ┌──────────────────────▼──────────────────────────┐    │
+│  │         Cost Tracker (成本追踪器)               │    │
+│  │  SQLite 本地存储，per-step/per-session 报告     │    │
+│  │  质量信号反馈闭环                               │    │
+│  └─────────────────────────────────────────────────┘    │
+├─────────────────────────────────────────────────────────┤
+│              MCP Server (可选，交互用)                    │
+│  get_cost_report / optimize_pipeline / models_list      │
+│  用户主动查报告、手动优化、调配置                        │
+│  不是路由的必需品，是增值功能                            │
+├─────────────────────────────────────────────────────────┤
+│                    Provider Layer                        │
+│  OpenAI / Anthropic / Google / DeepSeek / 智谱 / 月之暗面│
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. 分发与安装
+
+### 3.1 Monorepo 包结构
+
+```
+agentdispatch/
+├── packages/
+│   ├── core/              # @agentdispatch/core — 路由引擎核心
+│   │   ├── analyzer/      #   Step Analyzer
+│   │   ├── optimizer/     #   Combo Optimizer
+│   │   ├── registry/      #   Model Registry
+│   │   ├── tracker/       #   Cost Tracker
+│   │   └── types/         #   共享类型定义
+│   ├── hook/              # @agentdispatch/hook — NODE_OPTIONS 注入的 Hook
+│   ├── codex/             # @agentdispatch/codex — Codex MCP Server（可选）
+│   ├── claude-code/       # @agentdispatch/claude-code — Claude Code MCP Server（可选）
+│   ├── langchain/         # @agentdispatch/langchain — LangChain callback handler
+│   ├── cli/               # @agentdispatch/cli — 统一命令行工具
+│   └── models/            # @agentdispatch/models — 模型定价/能力数据库
+├── config/                # 共享 tsconfig / eslint / prettier
+└── e2e/                   # 端到端测试
+```
+
+构建工具：pnpm workspaces + Turborepo。
+
+### 3.2 安装方式
+
+```bash
+# 全局安装 CLI
+npm install -g @agentdispatch/cli
+
+# 初始化（自动检测已安装的 CLI 工具）
+agentdispatch init
+# 输出：
+# ✅ Codex: 已写入 shell alias
+# ✅ Claude Code: 已写入 shell alias
+# 🔑 可选: export DEEPSEEK_API_KEY=xxx (启用中国模型路由)
+```
+
+### 3.3 Shell Alias（核心集成机制）
+
+`agentdispatch init` 写入 `.zshrc` / `.bashrc`：
+
+```bash
+alias codex='NODE_OPTIONS="--require @agentdispatch/hook" codex'
+alias claude='NODE_OPTIONS="--require @agentdispatch/hook" claude'
+```
+
+用户照常敲 `codex` / `claude`，完全无感。Hook 在进程内拦截所有 LLM API 调用。
+
+### 3.4 项目级配置（可选）
+
+```jsonc
+// package.json
+{
+  "scripts": {
+    "codex": "NODE_OPTIONS='--require @agentdispatch/hook' codex",
+    "claude": "NODE_OPTIONS='--require @agentdispatch/hook' claude"
+  }
+}
+```
+
+### 3.5 自动更新
+
+```jsonc
+// agentdispatch.config.json
+{
+  "updates": {
+    "autoCheck": true,           // 启动时自动检查
+    "modelDataCacheTTL": 86400,  // 模型数据缓存 24h
+    "notifyChannel": "cli"       // cli 提示 / off 关闭
+  }
+}
+```
+
+- 核心引擎更新：走 npm 版本发布
+- 模型定价数据更新：远程数据源（GitHub Release JSON），不需要发版
+
+---
+
+## 4. 配置文件
+
+`agentdispatch.config.json`（存放于项目根目录或 `~/.agentdispatch/`）：
+
+```jsonc
+{
+  // 模型池定义 — 用户可增删
+  "models": {
+    "fast": ["openai/gpt-5.3-codex-spark", "anthropic/claude-haiku-4-5", "deepseek/v4-flash"],
+    "standard": ["openai/gpt-5.4", "anthropic/claude-sonnet-4-6", "deepseek/v4-pro", "alibaba/qwen3-max"],
+    "powerful": ["openai/gpt-5.5", "anthropic/claude-opus-4-6", "zhipu/glm-5"]
+  },
+
+  // 路由偏好
+  "routing": {
+    "defaultStrategy": "cost-optimal",  // cost-optimal / quality-first / balanced
+    "analyzerModel": "auto",            // auto = 用注册表中最便宜的可用模型
+    "cacheResults": true                // 缓存路由决策，相似请求不重复分析
+  },
+
+  // Provider 配置（密钥从环境变量读取，不写入配置文件）
+  "providers": {
+    "openai":    { "baseUrl": "https://api.openai.com/v1" },
+    "anthropic": { "baseUrl": "https://api.anthropic.com" },
+    "deepseek":  { "baseUrl": "https://api.deepseek.com" },
+    "zhipu":     { "baseUrl": "https://open.bigmodel.cn/api/paas/v4" },
+    "moonshot":  { "baseUrl": "https://api.moonshot.cn/v1" },
+    "alibaba":   { "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+    "xiaomi":    { "baseUrl": "https://platform.xiaomimimo.com/v1" }
+  },
+
+  // 用户自定义模型
+  "customModels": [
+    {
+      "id": "my-company/self-hosted-llama",
+      "provider": "custom",
+      "tier": "fast",
+      "pricing": { "inputPerMillion": 0, "outputPerMillion": 0, "cacheHitPerMillion": 0 },
+      "api": {
+        "protocol": "openai",
+        "baseUrl": "http://internal-llm.mycompany.com:8080/v1",
+        "modelId": "llama-4-maverick"
+      }
+    }
+  ],
+
+  // 成本追踪
+  "tracking": {
+    "enabled": true,
+    "storePath": "./agentdispatch-data/",
+    "reportFormat": "json"
+  },
+
+  // 在线学习
+  "onlineLearning": {
+    "enabled": true,
+    "minSamplesBeforeSuggest": 50,
+    "suggestionChannel": "cli",
+    "autoApply": false,
+    "windowSize": 200
+  }
+}
+```
+
+---
+
+## 5. CLI 命令
+
+```bash
+# 初始化
+agentdispatch init                    # 自动检测工具并配置
+agentdispatch init --tool codex       # 只配置 Codex
+agentdispatch init --tool claude-code # 只配置 Claude Code
+
+# 成本分析
+agentdispatch cost                    # 当前月度成本报告
+agentdispatch cost --last 7d          # 最近 7 天
+agentdispatch cost --by-step          # 按步骤类型分组
+
+# 组合优化
+agentdispatch optimize                # 基于历史数据自动搜索最优组合
+agentdispatch optimize --pipeline ./my-pipeline.yaml  # 指定 pipeline 定义
+
+# 模型管理
+agentdispatch models list             # 列出所有可用模型和定价
+agentdispatch models update           # 手动拉取最新模型数据
+
+# 配置
+agentdispatch config set routing.defaultStrategy balanced
+agentdispatch config get models.fast
+agentdispatch config set updates.autoCheck false
+```
+
+---
+
+## 6. Step Analyzer（步骤分析器）
+
+### 6.1 输入
+
+Hook 拦截到 LLM API 请求后，从请求内容中提取分析所需信息：
+
+```typescript
+interface StepAnalysisRequest {
+  task: string;              // 从 messages 中提取的任务描述
+  stepType?: StepType;       // 步骤类型（可选，自动推断）
+  context?: string;          // 对话历史摘要（最近几轮）
+  availableTools?: string[]; // 当前请求的 tools 字段
+  previousModel?: string;    // 上一步用的模型
+  originalModel?: string;    // 原始请求的模型
+}
+
+type StepType =
+  | "planning"        // 规划：分析问题、制定方案
+  | "exploration"     // 探索：搜索代码、读取文件
+  | "editing"         // 编辑：修改代码、写文件
+  | "testing"         // 测试：运行测试、检查输出
+  | "reviewing"       // 审查：代码审查、质量检查
+  | "reasoning"       // 推理：复杂逻辑、架构决策
+  | "formatting"      // 格式化：JSON 格式化、lint fix
+  | "simple_tool_use" // 简单工具：grep、ls、cat
+  | "confirmation"    // 确认：用户确认、简单回复
+  | "unknown";
+```
+
+### 6.2 输出
+
+```typescript
+interface StepAnalysisResponse {
+  recommendedModel: string;
+  recommendedTier: "fast" | "standard" | "powerful";
+  stepType: StepType;
+  difficulty: number;            // 0-1
+  confidence: number;            // 0-1
+  reasoning: string;
+  estimatedTokens: { input: number; output: number };
+  alternatives: Array<{
+    model: string;
+    tier: string;
+    costSavingsVsRecommended: number;
+    qualityRisk: "none" | "low" | "medium" | "high";
+  }>;
+}
+```
+
+### 6.3 三级决策逻辑
+
+```
+Level 1: 规则匹配（< 1ms，零成本）
+  ├── stepType === "confirmation" → fast tier
+  ├── stepType === "formatting" → fast tier
+  ├── stepType === "simple_tool_use" → fast tier
+  ├── stepType === "exploration" && 无复杂推理关键词 → fast tier
+  └── 无匹配 → 进入 Level 2
+
+Level 2: 轻量模型分类（~300-500ms，~$0.001）
+  ├── 用 fast tier 模型（如 gpt-5.3-spark / DeepSeek V4-Flash）分析
+  ├── 输入: task + context 摘要（压缩到 < 2K token）
+  ├── 输出: stepType + difficulty + recommendedTier
+  └── confidence > 0.8 → 返回结果；否则进入 Level 3
+
+Level 3: 缓存历史 + 保守策略
+  ├── 查询相似历史决策（本地 SQLite）
+  ├── 有高置信历史记录 → 复用
+  └── 无历史 → 保守策略：standard tier
+```
+
+### 6.4 分类 Prompt（Level 2 内部使用）
+
+```
+你是一个 AI Agent 步骤分析器。根据以下信息判断这个步骤的难度和推荐模型等级。
+
+任务: {task}
+对话上下文: {context}
+可用工具: {tools}
+
+输出 JSON:
+{
+  "stepType": "planning|exploration|editing|testing|reviewing|reasoning|formatting|simple_tool_use|confirmation",
+  "difficulty": 0.0-1.0,
+  "recommendedTier": "fast|standard|powerful",
+  "confidence": 0.0-1.0,
+  "reasoning": "一句话解释"
+}
+
+判断标准:
+- fast: 格式化、简单搜索、文件读取、确认操作、样板代码生成
+- standard: 常规代码编写、标准重构、测试编写、中等复杂度的 bug 修复
+- powerful: 架构设计、复杂多文件调试、安全审计、需要深度推理的问题
+```
+
+### 6.5 从消息内容推断步骤类型
+
+Hook 不依赖 prompt 引导，直接从 HTTP 请求的 messages 字段推断：
+
+```typescript
+function inferStepFromMessages(messages: Message[]): StepAnalysis {
+  const lastUserMsg = messages.filter(m => m.role === "user").at(-1)?.content ?? "";
+  const toolResults = messages.filter(m => m.role === "tool");
+  const hasToolCalls = messages.some(m => m.role === "assistant" && m.tool_calls?.length);
+
+  // Level 1 规则匹配
+  if (isSimpleToolCall(lastUserMsg))         return { type: "simple_tool_use", tier: "fast" };
+  if (isFormattingOrLint(lastUserMsg))       return { type: "formatting", tier: "fast" };
+  if (isFileRead(toolResults))               return { type: "exploration", tier: "fast" };
+  if (isCodeEdit(lastUserMsg) && !isComplex(lastUserMsg)) return { type: "editing", tier: "standard" };
+
+  // Level 2 内容分析
+  return analyzeWithLLM(lastUserMsg, extractContext(messages));
+}
+```
+
+### 6.6 缓存策略
+
+- 缓存 key = hash(task + stepType)
+- 命中缓存时直接返回，不走 LLM
+- TTL: 24h
+- 存储: 内存 LRU + SQLite 持久化
+- 失效: 模型定价变化时清空
+
+---
+
+## 7. Combo Optimizer（组合优化器）
+
+解决的核心问题：**单个步骤的最优模型 ≠ 整个 pipeline 的最优组合**。
+
+### 7.1 核心抽象
+
+```typescript
+interface Pipeline {
+  name: string;
+  steps: PipelineStep[];
+}
+
+interface PipelineStep {
+  id: string;
+  description: string;
+  candidateModels: string[];
+}
+
+interface OptimizationResult {
+  pipeline: string;
+  combos: RankedCombo[];
+  searchStats: {
+    totalCombos: number;
+    evaluated: number;
+    savingsVsAllPowerful: number;
+    searchTimeMs: number;
+  };
+}
+
+interface RankedCombo {
+  rank: number;
+  models: Record<string, string>;
+  estimatedAccuracy: number;
+  estimatedCost: number;
+  estimatedLatency: number;
+  paretoFrontier: "cost-optimal" | "balanced" | "quality-optimal";
+}
+```
+
+### 7.2 Pipeline 定义文件
+
+```yaml
+# my-pipeline.yaml
+pipeline:
+  name: "code-review-agent"
+  steps:
+    - id: "explorer"
+      description: "搜索并理解相关代码"
+      candidates: ["openai/gpt-5.3-codex-spark", "deepseek/v4-flash", "openai/gpt-5.4"]
+    - id: "reviewer"
+      description: "审查代码质量、安全性、正确性"
+      candidates: ["openai/gpt-5.4", "openai/gpt-5.5", "anthropic/claude-sonnet-4-6", "anthropic/claude-opus-4-6"]
+    - id: "summarizer"
+      description: "生成审查报告摘要"
+      candidates: ["openai/gpt-5.3-codex-spark", "deepseek/v4-flash", "anthropic/claude-haiku-4-5"]
+
+eval:
+  dataset: "./eval-samples.json"
+  metric: "accuracy"
+```
+
+### 7.3 搜索算法
+
+TypeScript 原生重写（不依赖 AgentOpt Python 包）：
+
+```typescript
+type SearchAlgorithm =
+  | "brute_force"      // 小空间（< 100 组合）
+  | "arm_elimination"  // 默认：bandit 算法
+  | "epsilon_lucb"     // ε-最优即停
+  | "hill_climbing"    // 贪心搜索
+  | "bayesian";        // GP Bayesian 优化
+
+const DEFAULT_SEARCH: SearchConfig = {
+  algorithm: "arm_elimination",
+  maxEvaluations: 50,
+  parallelWorkers: 4,
+  earlyStop: true,
+  cacheEvalResults: true,
+};
+```
+
+### 7.4 在线学习
+
+Pipeline 在生产运行时，Cost Tracker 记录每步实际效果。Combo Optimizer 后台分析：
+
+```typescript
+interface OnlineLearningConfig {
+  enabled: boolean;
+  minSamplesBeforeSuggest: 50;
+  suggestionChannel: "cli" | "log" | "off";
+  autoApply: false;
+  windowSize: 200;
+}
+```
+
+反馈闭环：
+
+```
+Hook 路由到推荐模型 → Agent 执行 → Cost Tracker 记录结果
+                                          │
+                                          ▼
+                                   隐式质量信号：
+                                   - success: 无重试
+                                   - retry: 同任务重复请求
+                                   - manual_switch: 用户手动切模型
+                                   - error: API 错误
+                                          │
+                                          ▼
+                                   Combo Optimizer 更新
+                                   该步骤类型的模型评分
+```
+
+---
+
+## 8. Model Registry（模型注册表）
+
+### 8.1 模型数据结构
+
+```typescript
+interface ModelEntry {
+  id: string;                    // "openai/gpt-5.3-codex-spark"
+  provider: string;              // openai / anthropic / deepseek / zhipu / moonshot / alibaba / xiaomi
+  displayName: string;
+  tier: "fast" | "standard" | "powerful";
+
+  pricing: {
+    inputPerMillion: number;     // $/MTok
+    outputPerMillion: number;
+    cacheHitPerMillion: number;  // -1 = 不支持缓存
+    currency: "USD";
+  };
+
+  capabilities: {
+    codeGeneration: number;      // 0-10
+    codeReview: number;
+    planning: number;
+    reasoning: number;
+    toolUse: number;
+    contextWindow: number;       // K tokens
+    maxOutputTokens: number;     // K tokens
+    streaming: boolean;
+    jsonMode: boolean;
+  };
+
+  routing: {
+    avgLatencyMs: number;
+    tokensPerSecond: number;
+    availability: number;        // 0-1
+    region: ("us" | "cn" | "global")[];
+  };
+
+  api: {
+    protocol: "openai" | "anthropic";
+    baseUrl: string;
+    modelId: string;
+  };
+}
+```
+
+### 8.2 预置模型清单
+
+**海外**：
+
+| ID | Tier | 输入 $/MTok | 输出 $/MTok | 协议 |
+|----|------|-----------|-----------|------|
+| openai/gpt-5.5 | powerful | 30 | 120 | openai |
+| openai/gpt-5.4 | standard | 5 | 20 | openai |
+| openai/gpt-5.3-codex-spark | fast | 0.5 | 2 | openai |
+| openai/gpt-5.4-mini | fast | 0.25 | 1 | openai |
+| anthropic/claude-opus-4-6 | powerful | 5 | 25 | anthropic |
+| anthropic/claude-sonnet-4-6 | standard | 3 | 15 | anthropic |
+| anthropic/claude-haiku-4-5 | fast | 1 | 5 | anthropic |
+| google/gemini-2.5-pro | powerful | — | — | openai |
+| google/gemini-2.5-flash | fast | — | — | openai |
+
+**中国**：
+
+| ID | Tier | 输入 $/MTok | 输出 $/MTok | 缓存命中 | 上下文 | 协议 |
+|----|------|-----------|-----------|--------|--------|------|
+| deepseek/v4-pro | standard | 0.435 | 0.87 | 0.003625 | 128K | openai |
+| deepseek/v4-flash | fast | 0.14 | 0.28 | 0.02 | 1M | openai |
+| zhipu/glm-5 | powerful | 1.0 | 3.2 | — | 200K | openai |
+| moonshot/kimi-k2.6 | standard | 0.16-2.0 | 2.5 | 0.07 | 128K | openai |
+| alibaba/qwen3-max | standard | 0.78 | 3.9 | 0.156 | 262K | openai |
+| xiaomi/mimo-v2.5 | standard | 1.0 | 3.0 | 0.2 | 1M | openai |
+
+### 8.3 远程数据更新
+
+```
+npm 包内置 models.json（发版时快照）
+         │
+         └── 启动时检查远程源 → 合并最新定价 → 本地缓存 24h
+             远程源: GitHub Release / npm @agentdispatch/models
+```
+
+### 8.4 跨 Provider API 适配
+
+```typescript
+function buildRequest(originalReq: any, targetModel: ModelEntry): { url: string; body: any; headers: any } {
+  if (targetModel.api.protocol === "openai") {
+    return {
+      url: `${targetModel.api.baseUrl}/chat/completions`,
+      body: { ...originalReq.body, model: targetModel.api.modelId },
+      headers: getAuthHeaders(targetModel.provider),
+    };
+  }
+
+  if (targetModel.api.protocol === "anthropic") {
+    return {
+      url: `${targetModel.api.baseUrl}/v1/messages`,
+      body: openaiToAnthropic(originalReq.body, targetModel.api.modelId),
+      headers: getAuthHeaders(targetModel.provider),
+    };
+  }
+}
+```
+
+---
+
+## 9. Hook 集成机制
+
+### 9.1 核心 Hook 实现
+
+```typescript
+// @agentdispatch/hook — 入口
+const originalFetch = globalThis.fetch;
+
+globalThis.fetch = async function patchedFetch(input: RequestInfo, init?: RequestInit) {
+  const url = typeof input === 'string' ? input : input.url;
+
+  // 只拦截 LLM API 请求
+  if (!isLLMApiCall(url)) {
+    return originalFetch.call(this, input, init);
+  }
+
+  try {
+    const body = JSON.parse(init?.body as string);
+    const analysis = stepAnalyzer.analyzeFromMessages(body.messages, body.model);
+
+    if (analysis.recommendedModel !== body.model) {
+      body.model = analysis.recommendedModel;
+
+      // 跨 provider 时改写 URL 和 headers
+      if (analysis.needsProviderSwitch) {
+        input = rewriteURL(input, analysis.recommendedModel);
+        init = rewriteHeaders(init, analysis.recommendedModel);
+      } else {
+        init = { ...init, body: JSON.stringify(body) };
+      }
+    }
+
+    const response = await originalFetch.call(this, input, init);
+
+    // 异步记录，不阻塞响应
+    costTracker.recordAsync(analysis, response);
+
+    return response;
+  } catch (err) {
+    // 任何错误 → 原样放行
+    logError(err);
+    return originalFetch.call(this, input, init);
+  }
+};
+```
+
+### 9.2 API Key 管理
+
+```typescript
+const keyMap: Record<string, string | undefined> = {
+  "openai":    process.env.OPENAI_API_KEY,
+  "anthropic": process.env.ANTHROPIC_API_KEY,
+  "deepseek":  process.env.DEEPSEEK_API_KEY,
+  "zhipu":     process.env.ZHIPU_API_KEY,
+  "moonshot":  process.env.MOONSHOT_API_KEY,
+  "alibaba":   process.env.ALIBABA_API_KEY,
+  "xiaomi":    process.env.XIAOMI_API_KEY,
+};
+
+// 路由时只考虑有 API Key 的 provider
+function getAvailableModels(models: ModelEntry[]): ModelEntry[] {
+  return models.filter(m => keyMap[m.provider] !== undefined);
+}
+```
+
+### 9.3 用户手动切模型检测
+
+```typescript
+function detectManualSwitch(sessionId: string, currentModel: string): boolean {
+  const lastRouted = sessionState.getLastRoutedModel(sessionId);
+  return lastRouted !== null && currentModel !== lastRouted &&
+         !isOurRouting(currentModel, lastRouted);
+}
+```
+
+---
+
+## 10. 数据存储
+
+### 10.1 存储结构
+
+```
+~/.agentdispatch/
+├── data.db                # SQLite 主数据库（WAL 模式）
+├── config.json            # 用户配置
+├── cache/
+│   └── route-cache.json   # 路由缓存持久化
+├── reports/               # 导出的成本报告
+└── errors.log             # Hook 错误日志
+```
+
+### 10.2 数据库 Schema
+
+```sql
+CREATE TABLE routing_logs (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp       TEXT NOT NULL DEFAULT (datetime('now')),
+  session_id      TEXT NOT NULL,
+  tool            TEXT NOT NULL,          -- codex / claude-code / langchain
+  step_type       TEXT NOT NULL,
+  original_model  TEXT NOT NULL,
+  routed_model    TEXT NOT NULL,
+  difficulty      REAL,
+  confidence      REAL,
+  reasoning       TEXT,
+  input_tokens    INTEGER DEFAULT 0,
+  output_tokens   INTEGER DEFAULT 0,
+  original_cost   REAL DEFAULT 0,
+  actual_cost     REAL DEFAULT 0,
+  savings         REAL DEFAULT 0,
+  quality_signal  TEXT DEFAULT NULL       -- success / retry / manual_switch / error
+);
+
+CREATE TABLE model_scores (
+  model           TEXT NOT NULL,
+  step_type       TEXT NOT NULL,
+  avg_accuracy    REAL DEFAULT 0.5,
+  avg_latency_ms  INTEGER DEFAULT 0,
+  avg_cost_per_task REAL DEFAULT 0,
+  sample_count    INTEGER DEFAULT 0,
+  last_updated    TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (model, step_type)
+);
+
+CREATE TABLE pipeline_combos (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  pipeline_name     TEXT NOT NULL,
+  combo_json        TEXT NOT NULL,
+  estimated_accuracy REAL,
+  estimated_cost    REAL,
+  pareto_type       TEXT,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+### 10.3 质量信号
+
+Hook 捕获的隐式质量信号：
+
+| 信号类型 | 含义 | 捕获方式 |
+|---------|------|---------|
+| success | 任务顺利完成 | 同 session 后续无重试 |
+| retry | 需要重试 | 检测到相似 prompt 的重复请求 |
+| manual_switch | 用户不满意 | 用户通过 /model 手动切换 |
+| task_abandoned | 任务放弃 | session 中断 |
+| error | 执行出错 | API 返回错误或超时 |
+
+---
+
+## 11. 错误处理
+
+**核心原则：Hook 失败时必须降级为原样放行，永远不阻断用户的工作流。**
+
+| 场景 | 处理方式 |
+|------|---------|
+| Hook 加载失败 | 静默跳过，写 errors.log，不阻断 codex/claude 启动 |
+| StepAnalyzer 超时（>500ms） | 跳过路由，用原始模型放行 |
+| 目标模型 API 不可用 | 自动 fallback 到原始模型，记录失败 |
+| 流式响应（SSE） | 只改写请求，响应流原样透传 |
+| 请求包含图片/附件 | 跳过内容分析，按规则匹配路由 |
+| 用户手动指定模型 | 检测到 manual switch，尊重用户选择 |
+| 并发请求 | 无状态，每个请求独立分析，无锁 |
+| SQLite 写入冲突 | WAL 模式 + 重试，写入失败不阻塞请求 |
+| API Key 缺失 | 跳过该 provider 的模型，降级到有 key 的 provider |
+
+---
+
+## 12. 成本报告
+
+```bash
+$ agentdispatch cost
+```
+
+```
+╭──────────────────────────────────────────────────────────╮
+│  AgentDispatch 成本报告 — 2026年5月                       │
+│                                                          │
+│  总览                                                     │
+│  ─────                                                    │
+│  总请求数:        1,247                                   │
+│  原始模型成本:    $142.30  (全部用原始模型)                │
+│  实际成本:        $58.70                                  │
+│  节省:            $83.60  (58.7%)                         │
+│                                                          │
+│  按步骤类型                                                │
+│  ──────────                                               │
+│  exploration    412次  95%→fast tier   节省 $38.20        │
+│  editing        298次  62%→standard     节省 $22.10        │
+│  formatting     187次  100%→fast tier   节省 $15.80        │
+│  reasoning       89次  78%→powerful     节省 $1.20         │
+│  simple_tool     261次  100%→fast tier   节省 $6.30         │
+│                                                          │
+│  按工具                                                    │
+│  ──────                                                   │
+│  Codex         823次  原始$94.10  实际$37.80  节省59.8%    │
+│  Claude Code   424次  原始$48.20  实际$20.90  节省56.6%    │
+│                                                          │
+│  路由准确率:  94.2%                                       │
+╰──────────────────────────────────────────────────────────╯
+```
+
+---
+
+## 附录 A：技术选型
+
+| 组件 | 选型 | 理由 |
+|------|------|------|
+| 语言 | TypeScript | 用户指定；MCP SDK 有官方 TS 实现；Codex/Claude Code 都是 Node.js |
+| 构建 | pnpm workspaces + Turborepo | monorepo 管理，增量构建 |
+| Hook 注入 | `--require` + monkey-patch fetch | 进程内拦截，无需额外 daemon |
+| 数据存储 | SQLite (better-sqlite3) | 本地文件，零运维，WAL 模式支持并发 |
+| MCP Server | @modelcontextprotocol/sdk | 官方 SDK，TypeScript 原生 |
+| 测试 | Vitest + 测试容器 | 单元测试 + 集成测试 |
+| 发布 | npm (public registry) | 标准分发渠道 |
+
+## 附录 B：文件存储位置
+
+| 路径 | 用途 |
+|------|------|
+| `~/.agentdispatch/` | 全局数据目录 |
+| `~/.agentdispatch/data.db` | SQLite 数据库 |
+| `~/.agentdispatch/config.json` | 全局配置（被项目级覆盖） |
+| `./agentdispatch.config.json` | 项目级配置 |
+| `./agentdispatch-data/` | 项目级数据存储（可 gitignore） |
+| `./agentdispatch-optimized.json` | 优化结果输出 |
