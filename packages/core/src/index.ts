@@ -58,3 +58,7 @@ export { DEFAULT_SEARCH_CONFIG } from "./optimizer/types.js";
 // === Task 22: Online learning ===
 export { OnlineLearner } from "./optimizer/online-learning.js";
 export type { ModelScore, OnlineLearnerConfig } from "./optimizer/online-learning.js";
+
+// === Task 23: Report Exporter ===
+export { generateReport } from "./tracker/report-exporter.js";
+export type { CostReport, StepReport, ToolReport } from "./tracker/report-exporter.js";

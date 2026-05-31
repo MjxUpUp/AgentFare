@@ -10,9 +10,12 @@
   },
   "dependencies": {
     "@agentdispatch/core": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@agentdispatch/models": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/node": "^22.19.19",
     "typescript": "^5.8",
     "vitest": "^3.2"
   }
