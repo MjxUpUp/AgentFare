@@ -13,6 +13,8 @@ export default defineConfig({
       "@agentdispatch/models": pkgs("models"),
       "@agentdispatch/hook/fetch-patch": path.resolve(__dirname, "packages/hook/dist/fetch-patch.js"),
       "@agentdispatch/hook/request-handler": path.resolve(__dirname, "packages/hook/dist/request-handler.js"),
+      "@agentdispatch/hook/protocol/openai-to-anthropic": path.resolve(__dirname, "packages/hook/dist/protocol/openai-to-anthropic.js"),
+      "@agentdispatch/hook/protocol/anthropic-to-openai": path.resolve(__dirname, "packages/hook/dist/protocol/anthropic-to-openai.js"),
       "@agentdispatch/hook": path.resolve(__dirname, "packages/hook/dist/index.js"),
     },
   },
