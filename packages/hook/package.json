@@ -3,6 +3,20 @@
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    },
+    "./fetch-patch": {
+      "import": "./dist/fetch-patch.js",
+      "require": "./dist/fetch-patch.js"
+    },
+    "./request-handler": {
+      "import": "./dist/request-handler.js",
+      "require": "./dist/request-handler.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
