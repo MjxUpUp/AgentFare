@@ -9,9 +9,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentdispatch/core": "workspace:*"
+    "@agentdispatch/core": "workspace:*",
+    "@agentdispatch/models": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.8",
     "vitest": "^3.2"
   }
