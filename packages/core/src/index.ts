@@ -13,3 +13,16 @@ export type {
   TrackingConfig,
   OnlineLearningConfig,
 } from "./config/types.js";
+
+// === Task 5: Step Analyzer L1 ===
+export { analyzeStepRules } from "./analyzer/rules.js";
+export { extractTaskFromMessages } from "./analyzer/types.js";
+export type {
+  StepType,
+  StepAnalysis,
+  StepAnalysisRequest,
+  LLMAnalysisInput,
+  Message,
+  ContentBlock,
+  ToolCall,
+} from "./analyzer/types.js";
