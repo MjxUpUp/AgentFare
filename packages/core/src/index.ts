@@ -33,3 +33,7 @@ export { CostTracker } from "./tracker/cost-tracker.js";
 export { QualitySignalCollector } from "./tracker/quality-signal.js";
 export type { QualitySignal, QualitySignalEvent } from "./tracker/quality-signal.js";
 export type { RoutingLogEntry, CostSummary } from "./tracker/database.js";
+
+// === Task 7: Routing Engine ===
+export { Router } from "./routing/router.js";
+export type { RoutingDecision } from "./routing/router.js";
