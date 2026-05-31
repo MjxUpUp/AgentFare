@@ -1,0 +1,15 @@
+{
+  "name": "@agentdispatch/langchain",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.8",
+    "vitest": "^3.2"
+  }
+}

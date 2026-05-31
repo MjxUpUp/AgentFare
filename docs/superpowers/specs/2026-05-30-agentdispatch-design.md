@@ -1,7 +1,7 @@
 # AgentDispatch — 产品设计文档
 
 > 日期：2026-05-30
-> 状态：已批准（v2，已修复 spec review 发现的问题）
+> 状态：已批准（v3，新增跨 Provider 三层路由模式：off / opt-in / enterprise）
 > 基于：竞品技术验证调研报告、开发者痛点热点分析、Claude Code vs Cursor vs Codex 架构对比
 
 ---
@@ -97,13 +97,13 @@ npx @agentdispatch/setup
 1. 检测已安装的 CLI 工具（codex、claude）
 2. 写入 shell function 到 `~/.zshrc` 或 `~/.bashrc`
 3. 验证 Hook 拦截可用性
-4. 扫描环境变量中已有的 API Key 并展示
+4. 报告当前路由模式状态
 
 安装完成后 `source ~/.zshrc` 或新开终端即生效。
 
 **不需要用户输入任何信息，不需要管理 API Key。**
 
-核心场景是**同 provider 内路由**：Codex 请求里的 OpenAI key 直接复用，Claude Code 请求里的 Anthropic key 直接复用。Hook 只改写 `model` 字段，URL 和 key 原样转发。
+默认模式为**同 provider 内路由（`crossProvider: "off"`）**：Codex 请求里的 OpenAI key 直接复用，Claude Code 请求里的 Anthropic key 直接复用。Hook 只改写 `model` 字段，URL 和 key 原样转发。同 provider 内 opus→haiku 的差价已达 5x，默认模式已覆盖大部分成本优化需求。
 
 ### 3.2 Shell Function（替代 alias）
 
@@ -125,15 +125,109 @@ function 比 alias 的优势：
 - `command codex` 避免递归调用
 - 可以在函数内扩展逻辑（如检测更新）
 
-### 3.3 跨 Provider 路由（高级功能，可选）
+### 3.3 跨 Provider 路由模式
 
-核心路由在同 provider 内完成（零配置）。如果用户还想跨 provider 路由（如 Codex 请求路由到 DeepSeek），只需设置对应的环境变量：
+默认模式（`crossProvider: "off"`）下，Hook 只在同 provider 内路由，不跨 provider。跨 provider 路由需要用户或企业显式选择，分为三种模式：
 
-```bash
-export DEEPSEEK_API_KEY=xxx    # Hook 自动检测并纳入路由候选
+#### 模式一：`off`（默认）
+
+零配置，开箱即用。覆盖场景：企业统一采购单一 provider（只用 Claude Code 或只用 Codex），开发者没有其他 provider 的 key。
+
+```
+开发者用 Claude Code (Anthropic key)
+  └── Hook 只在 Anthropic 模型间路由：opus → sonnet → haiku
+
+开发者用 Codex (OpenAI key)
+  └── Hook 只在 OpenAI 模型间路由：gpt-5.5 → gpt-5.4 → gpt-5.3-spark
 ```
 
-没有设置跨 provider key 时，Hook 只在同 provider 的模型间路由，不会报错。
+即使 Step Analyzer 推荐了其他 provider 的模型，Hook 也**不会**跨 provider——自动降级到同 provider 内的最优替代。企业 IT 不需要做任何额外配置，也不需要担心代码发到非授权 provider。
+
+#### 模式二：`opt-in`（个人开发者主动开启）
+
+覆盖场景：个人开发者拥有多个 provider 的 key，愿意跨 provider 路由以获取更大成本优化。
+
+```jsonc
+// agentdispatch.config.json
+{
+  "routing": {
+    "crossProvider": "opt-in",
+    "crossProviderProviders": ["deepseek", "alibaba"]  // 白名单：只允许路由到这些 provider
+  }
+}
+```
+
+规则：
+- 必须同时设置白名单（`crossProviderProviders`）和对应的环境变量 key → 才会触发跨 provider 路由
+- 只设了白名单没设 key → 静默降级到同 provider，不报错
+- 不在白名单中的 provider 不会被考虑，即使有 key
+- 不是"有 key 就用"，而是"明确声明了才用"
+
+```bash
+# 开发者需要做两件事才能启用跨 provider：
+# 1. 配置白名单
+agentdispatch config set routing.crossProvider opt-in
+agentdispatch config set routing.crossProviderProviders '["deepseek"]'
+
+# 2. 设置对应环境变量
+export DEEPSEEK_API_KEY=xxx
+```
+
+#### 模式三：`enterprise`（企业统一管理多 provider）
+
+覆盖场景：企业同时采购了多个 provider 的服务，由 IT 统一配置认证和策略。
+
+```jsonc
+// /etc/agentdispatch/enterprise.json（IT 通过 MDM / 内网下发，开发者不可修改）
+{
+  "routing": {
+    "crossProvider": "enterprise",
+    "enterpriseProviders": {
+      "deepseek": {
+        "baseUrl": "https://llm-proxy.company.internal/deepseek",
+        "authMode": "corporate-sso",           // 不是个人 key，是企业认证
+        "allowedTiers": ["fast", "standard"],  // 限制只能路由到便宜模型
+        "dataRegion": "cn"                      // 数据必须留在中国
+      },
+      "openai": {
+        "baseUrl": "https://llm-proxy.company.internal/openai",
+        "authMode": "corporate-sso",
+        "allowedTiers": ["standard"],
+        "dataRegion": "us"
+      }
+    }
+  }
+}
+```
+
+关键区别：
+- **认证方式由企业指定**（SSO / 内网代理 / 服务账号），不依赖开发者个人的环境变量
+- **IT 控制**哪些 provider 可用、可用哪些 tier、数据必须留在哪个区域
+- **开发者不可覆盖**企业配置（配置合并时企业配置优先级最高且锁定关键字段）
+- 如果企业配置锁定了 `crossProvider: "off"`，开发者自己的 `opt-in` 设置会被忽略并输出提示：
+
+```
+[AgentDispatch] 企业策略禁止跨 provider 路由，已忽略个人配置中的 crossProvider: "opt-in"
+```
+
+#### 安装输出示例
+
+```
+检测环境...
+✓ 检测到 Claude Code (Anthropic)
+✓ 检测到 ANTHROPIC_API_KEY
+
+同 Provider 路由: ✓ 已就绪（Claude opus/sonnet/haiku）
+
+跨 Provider 路由:
+  ● 当前模式: off（仅同 provider 内路由）
+  ● 未检测到其他 provider 的 API Key
+  ● 如需启用，请设置对应环境变量并运行：
+    agentdispatch config set routing.crossProvider opt-in
+  ● 企业用户请联系 IT 获取企业配置
+```
+
+不再自动扫描所有环境变量然后"有什么用什么"，而是**明确告知用户当前模式、如何开启更高阶的模式**。
 
 ### 3.4 包结构
 
@@ -180,7 +274,10 @@ agentdispatch/
   "routing": {
     "defaultStrategy": "cost-optimal",  // cost-optimal / quality-first / balanced
     "analyzerModel": "auto",            // auto = 用注册表中最便宜的可用模型
-    "cacheResults": true                // 缓存路由决策，相似请求不重复分析
+    "cacheResults": true,               // 缓存路由决策，相似请求不重复分析
+    "crossProvider": "off",             // off / opt-in / enterprise（见 §3.3）
+    "crossProviderProviders": [],        // opt-in 白名单，如 ["deepseek", "alibaba"]
+    "enterpriseProviders": {}           // enterprise 模式，由 IT 下发（见 §3.3）
   },
 
   // Provider 配置（密钥从环境变量读取，不写入配置文件）
@@ -650,15 +747,18 @@ globalThis.fetch = async function patchedFetch(input: RequestInfo, init?: Reques
 };
 ```
 
-### 9.2 API Key 处理原则
+### 9.2 API Key 处理与跨 Provider 路由策略
 
-Hook 不管理 API Key，只做转发和复用：
+Hook 不管理 API Key，只做转发和复用。跨 provider 行为由配置中的 `routing.crossProvider` 模式决定：
 
-**同 provider 路由（核心场景，零配置）**：
-原始请求已包含完整的 URL 和 Authorization header。Hook 只改写 `body.model`，其他原样转发。key 从原始请求自动获取，不需要任何配置。
+**模式 `off`（默认）**：
+原始请求已包含完整的 URL 和 Authorization header。Hook 只改写 `body.model`，其他原样转发。key 从原始请求自动获取。即使推荐模型属于其他 provider，也**不会**跨 provider——降级到同 provider 内的最优替代。
 
-**跨 provider 路由（高级功能，需要环境变量）**：
-如果推荐模型属于不同 provider，Hook 检查环境变量中是否有对应的 key。有则改写 URL + key 转发；没有则跳过该模型，降级到同 provider 的替代模型。
+**模式 `opt-in`**：
+如果推荐模型属于白名单中的 provider（`crossProviderProviders`），Hook 检查环境变量中是否有对应的 key。有则改写 URL + key 转发；没有则降级到同 provider。不在白名单中的 provider 不会被考虑。
+
+**模式 `enterprise`**：
+路由目标由企业 IT 配置（`enterpriseProviders`）决定。认证方式由企业指定（SSO / 内网代理 / 服务账号），不依赖个人环境变量。IT 同时限制可用 provider、tier 和数据区域。
 
 ```typescript
 function handleRouting(originalRequest: Request, analysis: StepAnalysis): Request {
@@ -668,17 +768,49 @@ function handleRouting(originalRequest: Request, analysis: StepAnalysis): Reques
   if (targetModel.provider === originalProvider) {
     // 同 provider：只改 model 字段，url 和 key 原样保留
     return rewriteModelOnly(originalRequest, targetModel.api.modelId);
-  } else {
-    // 跨 provider：需要检查环境变量
+  }
+
+  // 跨 provider：根据模式决策
+  const mode = config.routing.crossProvider;
+
+  if (mode === "off") {
+    // 默认模式：不跨 provider，降级到同 provider 最优替代
+    const fallback = findCheapestModel(originalProvider, analysis.recommendedTier);
+    return rewriteModelOnly(originalRequest, fallback.api.modelId);
+  }
+
+  if (mode === "opt-in") {
+    // 个人模式：检查白名单 + 环境变量
+    if (!config.routing.crossProviderProviders.includes(targetModel.provider)) {
+      const fallback = findCheapestModel(originalProvider, analysis.recommendedTier);
+      return rewriteModelOnly(originalRequest, fallback.api.modelId);
+    }
     const crossProviderKey = getEnvKey(targetModel.provider);
     if (crossProviderKey) {
       return rewriteFullRequest(originalRequest, targetModel, crossProviderKey);
     } else {
-      // 没有 key → 降级到同 provider 的最便宜模型
       const fallback = findCheapestModel(originalProvider, analysis.recommendedTier);
       return rewriteModelOnly(originalRequest, fallback.api.modelId);
     }
   }
+
+  if (mode === "enterprise") {
+    // 企业模式：检查 IT 配置的 provider 策略
+    const enterpriseConfig = config.routing.enterpriseProviders[targetModel.provider];
+    if (!enterpriseConfig) {
+      const fallback = findCheapestModel(originalProvider, analysis.recommendedTier);
+      return rewriteModelOnly(originalRequest, fallback.api.modelId);
+    }
+    // 检查 tier 限制
+    if (!enterpriseConfig.allowedTiers.includes(targetModel.tier)) {
+      const fallback = findCheapestModel(originalProvider, analysis.recommendedTier);
+      return rewriteModelOnly(originalRequest, fallback.api.modelId);
+    }
+    return rewriteEnterpriseRequest(originalRequest, targetModel, enterpriseConfig);
+  }
+
+  // 兜底
+  return originalRequest;
 }
 ```
 
@@ -780,7 +912,8 @@ Hook 捕获的隐式质量信号：
 | 用户手动指定模型 | 检测到 manual switch，尊重用户选择 |
 | 并发请求 | 无状态，每个请求独立分析，无锁 |
 | SQLite 写入冲突 | WAL 模式 + 重试，写入失败不阻塞请求 |
-| API Key 缺失 | 跳过该 provider 的模型，降级到有 key 的 provider |
+| 跨 Provider key 缺失（opt-in 模式） | 跳过该 provider，降级到同 provider 替代模型 |
+| 企业策略禁止跨 Provider | 忽略个人 crossProvider 配置，输出提示，使用同 provider 替代 |
 
 ---
 
@@ -836,9 +969,10 @@ $ agentdispatch cost
 
 | 路径 | 用途 |
 |------|------|
+| `/etc/agentdispatch/enterprise.json` | 企业配置（IT 下发，优先级最高，不可被用户覆盖） |
 | `~/.agentdispatch/` | 全局数据目录 |
 | `~/.agentdispatch/data.db` | SQLite 数据库 |
-| `~/.agentdispatch/config.json` | 全局配置（被项目级覆盖） |
+| `~/.agentdispatch/config.json` | 全局配置（被企业配置和项目级覆盖） |
 | `./agentdispatch.config.json` | 项目级配置 |
 | `./agentdispatch-data/` | 项目级数据存储（可 gitignore） |
 | `./agentdispatch-optimized.json` | 优化结果输出 |
@@ -928,7 +1062,7 @@ function createSSETransformStream(targetFormat: "openai" | "anthropic"): Transfo
 }
 ```
 
-**策略决策**：MVP 阶段优先支持同协议路由（OpenAI → OpenAI 兼容的 DeepSeek/智谱等），因为大部分中国模型都兼容 OpenAI 格式。Anthropic ↔ OpenAI 的跨协议转换作为 Phase 2。
+**策略决策**：同协议路由（OpenAI → OpenAI 兼容的 DeepSeek/智谱等）和跨协议转换（Anthropic ↔ OpenAI）一并实现。大部分中国模型兼容 OpenAI 格式，Anthropic 的跨协议转换通过 Protocol Adapter 统一处理。
 
 ### C2 修复：流式响应成本追踪
 
@@ -1081,14 +1215,17 @@ try {
 ### m3 修复：配置文件合并策略
 
 ```
-合并规则（逐层覆盖）:
+合并规则（逐层覆盖，优先级从低到高）:
 1. 内置默认值（代码中的 defaults）
-2. 全局配置 ~/.agentdispatch/config.json（覆盖默认值）
-3. 项目配置 ./agentdispatch.config.json（覆盖全局配置）
+2. 企业配置 /etc/agentdispatch/enterprise.json（IT 下发，锁定字段不可覆盖）
+3. 全局配置 ~/.agentdispatch/config.json（覆盖默认值，但不可覆盖企业锁定的字段）
+4. 项目配置 ./agentdispatch.config.json（覆盖全局配置，但不可覆盖企业锁定的字段）
 
 字段行为：
 - 顶层字段（routing, tracking, updates）→ 整体替换
+- routing.crossProvider → 企业配置锁定时，用户配置被忽略并输出提示
 - models → 按组合并（models.fast 合并去重）
 - providers → 按 key 合并
 - customModels → 追加（不替换内置模型）
+- enterpriseProviders → 仅企业配置可设置，用户配置中写该字段会被忽略
 ```
