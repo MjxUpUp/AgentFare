@@ -37,3 +37,10 @@ export type { RoutingLogEntry, CostSummary } from "./tracker/database.js";
 // === Task 7: Routing Engine ===
 export { Router } from "./routing/router.js";
 export type { RoutingDecision } from "./routing/router.js";
+
+// === Task 12: Step Analyzer L2 ===
+export { analyzeWithLLM, buildAnalyzerPrompt } from "./analyzer/llm-analyzer.js";
+
+// === Task 13: Route Cache + Auto Model Selector ===
+export { RouteCache } from "./analyzer/cache.js";
+export { selectAnalyzerModel } from "./analyzer/auto-model-selector.js";
