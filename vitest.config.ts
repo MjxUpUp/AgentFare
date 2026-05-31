@@ -16,6 +16,8 @@ export default defineConfig({
       "@agentdispatch/hook/protocol/openai-to-anthropic": path.resolve(__dirname, "packages/hook/dist/protocol/openai-to-anthropic.js"),
       "@agentdispatch/hook/protocol/anthropic-to-openai": path.resolve(__dirname, "packages/hook/dist/protocol/anthropic-to-openai.js"),
       "@agentdispatch/hook": path.resolve(__dirname, "packages/hook/dist/index.js"),
+      "@agentdispatch/setup": pkgs("setup"),
+      "@agentdispatch/cli": pkgs("cli"),
     },
   },
 });

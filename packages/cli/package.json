@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "agentdispatch": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -10,9 +13,12 @@
   },
   "dependencies": {
     "@agentdispatch/core": "workspace:*",
+    "@agentdispatch/models": "workspace:*",
+    "@agentdispatch/setup": "workspace:*",
     "commander": "^13.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.8",
     "vitest": "^3.2"
   }
