@@ -45,8 +45,16 @@ export { analyzeWithLLM, buildAnalyzerPrompt } from "./analyzer/llm-analyzer.js"
 export { RouteCache } from "./analyzer/cache.js";
 export { selectAnalyzerModel } from "./analyzer/auto-model-selector.js";
 
-// === Task 20-21: Optimizer (stubs for CLI optimize command) ===
+// === Task 20: Optimizer eval runner ===
 export { parsePipelineYAML, computeTotalCombinations } from "./optimizer/pipeline-parser.js";
-export { bruteForceSearch, epsilonLucbSearch, armEliminationSearch } from "./optimizer/search.js";
-export type { Pipeline, PipelineStep, RankedCombo, SearchConfig } from "./optimizer/types.js";
+export { loadEvalDataset, evaluateCombo } from "./optimizer/eval-runner.js";
+export type { EvalSample, EvalResult } from "./optimizer/eval-runner.js";
+
+// === Task 21: Search algorithms ===
+export { bruteForceSearch, armEliminationSearch, epsilonLucbSearch, hillClimbingSearch, bayesianSearch } from "./optimizer/search.js";
+export type { Pipeline, PipelineStep, RankedCombo, SearchConfig, SearchAlgorithm } from "./optimizer/types.js";
 export { DEFAULT_SEARCH_CONFIG } from "./optimizer/types.js";
+
+// === Task 22: Online learning ===
+export { OnlineLearner } from "./optimizer/online-learning.js";
+export type { ModelScore, OnlineLearnerConfig } from "./optimizer/online-learning.js";
