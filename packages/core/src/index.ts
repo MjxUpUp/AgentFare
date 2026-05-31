@@ -26,3 +26,10 @@ export type {
   ContentBlock,
   ToolCall,
 } from "./analyzer/types.js";
+
+// === Task 6: Cost Tracker + SQLite ===
+export { TrackingDatabase } from "./tracker/database.js";
+export { CostTracker } from "./tracker/cost-tracker.js";
+export { QualitySignalCollector } from "./tracker/quality-signal.js";
+export type { QualitySignal, QualitySignalEvent } from "./tracker/quality-signal.js";
+export type { RoutingLogEntry, CostSummary } from "./tracker/database.js";
