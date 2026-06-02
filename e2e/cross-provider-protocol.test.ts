@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { installFetchPatch } from "@agentdispatch/hook/fetch-patch";
-import { DEFAULT_CONFIG } from "@agentdispatch/core";
-import { ModelRegistry } from "@agentdispatch/models";
-import type { RequestHandler, HandleResult } from "@agentdispatch/hook/request-handler";
-import { convertOpenAIToAnthropicRequest } from "@agentdispatch/hook/protocol/openai-to-anthropic";
-import { convertAnthropicToOpenAIResponse } from "@agentdispatch/hook/protocol/anthropic-to-openai";
+import { installFetchPatch } from "@agentfare/hook/fetch-patch";
+import { DEFAULT_CONFIG } from "@agentfare/core";
+import { ModelRegistry } from "@agentfare/models";
+import type { RequestHandler, HandleResult } from "@agentfare/hook/request-handler";
+import { convertOpenAIToAnthropicRequest } from "@agentfare/hook/protocol/openai-to-anthropic";
+import { convertAnthropicToOpenAIResponse } from "@agentfare/hook/protocol/anthropic-to-openai";
 
 /**
  * E2E: Cross-provider protocol conversion tests.
@@ -117,7 +117,7 @@ describe("E2E: Cross-provider protocol conversion", () => {
     // Use real RequestHandler with default config (crossProvider: "off")
     const registry = new ModelRegistry();
     // We need to import the real RequestHandler for this test
-    const { RequestHandler } = await import("@agentdispatch/hook/request-handler");
+    const { RequestHandler } = await import("@agentfare/hook/request-handler");
     const handler = new RequestHandler(DEFAULT_CONFIG, registry);
     uninstall = installFetchPatch({ handler });
 

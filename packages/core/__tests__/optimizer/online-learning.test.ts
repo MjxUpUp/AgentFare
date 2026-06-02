@@ -13,7 +13,7 @@ describe("OnlineLearner", () => {
   beforeEach(() => {
     dbPath = path.join(
       os.tmpdir(),
-      `agentdispatch-learner-test-${Date.now()}.db`,
+      `agentfare-learner-test-${Date.now()}.db`,
     );
     db = new TrackingDatabase(dbPath);
     learner = new OnlineLearner(db, { windowSize: 10 });

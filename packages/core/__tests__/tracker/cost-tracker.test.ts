@@ -4,7 +4,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { TrackingDatabase } from "../../src/tracker/database.js";
 import { CostTracker } from "../../src/tracker/cost-tracker.js";
-import { ModelRegistry } from "@agentdispatch/models";
+import { ModelRegistry } from "@agentfare/models";
 import type { StepAnalysis } from "../../src/analyzer/types.js";
 
 describe("CostTracker", () => {
@@ -16,7 +16,7 @@ describe("CostTracker", () => {
   beforeEach(() => {
     dbPath = path.join(
       os.tmpdir(),
-      `agentdispatch-cost-test-${Date.now()}.db`
+      `agentfare-cost-test-${Date.now()}.db`
     );
     db = new TrackingDatabase(dbPath);
     tracker = new CostTracker(db);
@@ -43,7 +43,7 @@ describe("CostTracker", () => {
     const originalModel = registry.get("openai/gpt-5.5")!;
     const targetModel = registry.get("openai/gpt-5.3-codex-spark")!;
 
-    await tracker.recordAsync(
+    tracker.record(
       analysis,
       "openai/gpt-5.5",
       originalModel,

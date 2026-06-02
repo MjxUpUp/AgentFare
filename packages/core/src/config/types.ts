@@ -34,7 +34,7 @@ export interface OnlineLearningConfig {
   windowSize: number;
 }
 
-export interface AgentDispatchConfig {
+export interface AgentFareConfig {
   models: {
     fast: string[];
     standard: string[];
@@ -47,7 +47,7 @@ export interface AgentDispatchConfig {
     provider: string;
     displayName: string;
     tier: "fast" | "standard" | "powerful";
-    pricing: { inputPerMillion: number; outputPerMillion: number; cacheHitPerMillion: number };
+    pricing: { inputPerMillion: number; outputPerMillion: number; cacheHitPerMillion: number | null };
     capabilities: {
       codeGeneration: number; codeReview: number; planning: number;
       reasoning: number; toolUse: number; contextWindow: number;

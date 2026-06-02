@@ -30,6 +30,10 @@ export function armEliminationSearch(
   accuracyFn?: (combo: Record<string, string>) => number,
   config: SearchConfig = DEFAULT_SEARCH_CONFIG,
 ): RankedCombo[] {
+  // ISSUE-017: guard against combinatorial explosion
+  const total = computeTotalCombinations(pipeline);
+  if (total > 1_000_000)
+    throw new Error(`Pipeline too large for arm elimination: ${total} combinations. Reduce steps or candidates, or use hillClimbingSearch.`);
   const combos = generateAllCombinations(pipeline);
   const n = combos.length;
   if (n <= config.maxEvaluations)
@@ -89,6 +93,10 @@ export function epsilonLucbSearch(
   accuracyFn?: (combo: Record<string, string>) => number,
   config: SearchConfig = DEFAULT_SEARCH_CONFIG,
 ): RankedCombo[] {
+  // ISSUE-017: guard against combinatorial explosion
+  const total = computeTotalCombinations(pipeline);
+  if (total > 1_000_000)
+    throw new Error(`Pipeline too large for epsilon-LUCB: ${total} combinations. Reduce steps or candidates, or use hillClimbingSearch.`);
   const combos = generateAllCombinations(pipeline);
   const n = combos.length;
   if (n <= config.maxEvaluations)
@@ -106,26 +114,35 @@ export function epsilonLucbSearch(
 
   while (totalEvals < config.maxEvaluations) {
     const means = scores.map((s, i) => s / counts[i]);
-    const bounds = means.map(
-      (_, i) => Math.sqrt((2 * Math.log(totalEvals)) / counts[i]),
+    const ucbs = means.map(
+      (m, i) => m + Math.sqrt(Math.log(totalEvals) / (2 * counts[i])),
     );
+
+    // Select the arm with the highest UCB (most uncertain / promising to explore)
+    let selectedIdx = 0;
+    let bestUCB = ucbs[0];
+    for (let i = 1; i < n; i++) {
+      if (ucbs[i] > bestUCB) {
+        bestUCB = ucbs[i];
+        selectedIdx = i;
+      }
+    }
+
+    // Early stop: check if best mean's upper bound is clearly separated from second
     const sorted = means
       .map((m, i) => ({ m, i }))
       .sort((a, b) => a.m - b.m);
     const bestIdx = sorted[0].i;
     const secondIdx = sorted[1].i;
-
     if (
-      means[bestIdx] + bounds[bestIdx] <
-      means[secondIdx] - bounds[secondIdx] + epsilon * means[secondIdx]
+      means[bestIdx] + Math.sqrt(Math.log(totalEvals) / (2 * counts[bestIdx])) <
+      means[secondIdx] - Math.sqrt(Math.log(totalEvals) / (2 * counts[secondIdx])) + epsilon * means[secondIdx]
     ) {
       if (config.earlyStop) break;
     }
 
-    const toEval =
-      bounds[bestIdx] > bounds[secondIdx] ? bestIdx : secondIdx;
-    scores[toEval] += costFn(combos[toEval]);
-    counts[toEval]++;
+    scores[selectedIdx] += costFn(combos[selectedIdx]);
+    counts[selectedIdx]++;
     totalEvals++;
   }
 
@@ -150,6 +167,11 @@ export function hillClimbingSearch(
   accuracyFn?: (combo: Record<string, string>) => number,
   config: SearchConfig = DEFAULT_SEARCH_CONFIG,
 ): RankedCombo[] {
+  const total = computeTotalCombinations(pipeline);
+  if (total > 100_000)
+    throw new Error(
+      `Pipeline too large: ${total} combinations exceed limit of 100000. Reduce steps or candidate models.`
+    );
   const steps = pipeline.steps;
   if (steps.length === 0) return [];
 
@@ -202,10 +224,17 @@ export function hillClimbingSearch(
     }
     if (!improved) {
       if (config.earlyStop) break;
-      for (const step of steps)
-        currentCombo[step.id] = step.candidateModels[0];
-      currentCost = costFn(currentCombo);
-      totalEvals++;
+      // Random restart from a historically good result
+      if (allResults.length > 0) {
+        const pick = allResults[Math.floor(Math.random() * Math.min(5, allResults.length))];
+        currentCombo = { ...pick.models };
+        currentCost = pick.estimatedCost;
+      } else {
+        for (const step of steps)
+          currentCombo[step.id] = step.candidateModels[0];
+        currentCost = costFn(currentCombo);
+        totalEvals++;
+      }
     }
   }
 
@@ -222,6 +251,10 @@ export function bayesianSearch(
   accuracyFn?: (combo: Record<string, string>) => number,
   config: SearchConfig = DEFAULT_SEARCH_CONFIG,
 ): RankedCombo[] {
+  // ISSUE-017: guard against combinatorial explosion
+  const total = computeTotalCombinations(pipeline);
+  if (total > 1_000_000)
+    throw new Error(`Pipeline too large for Bayesian search: ${total} combinations. Reduce steps or candidates, or use hillClimbingSearch.`);
   const combos = generateAllCombinations(pipeline);
   const n = combos.length;
   if (n <= config.maxEvaluations)
@@ -320,10 +353,14 @@ function comboKey(combo: Record<string, string>): string {
 }
 
 function hammingDistance(a: string, b: string): number {
+  // ISSUE-018: compare by step dimension, not by character
+  // comboKey format: "step1=modelA&step2=modelB"
+  const aEntries = new Map(a.split("&").map((p) => p.split("=") as [string, string]));
+  const bEntries = new Map(b.split("&").map((p) => p.split("=") as [string, string]));
   let dist = 0;
-  const maxLen = Math.max(a.length, b.length);
-  for (let i = 0; i < maxLen; i++) {
-    if (a[i] !== b[i]) dist++;
+  const allKeys = new Set([...aEntries.keys(), ...bEntries.keys()]);
+  for (const key of allKeys) {
+    if (aEntries.get(key) !== bEntries.get(key)) dist++;
   }
   return dist;
 }

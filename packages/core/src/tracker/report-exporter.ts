@@ -34,43 +34,24 @@ export function generateReport(db: TrackingDatabase, timeRange?: string): CostRe
     ? (summary.totalSavings / summary.totalOriginalCost) * 100
     : 0;
 
-  // Build by-step report
-  const logs = db.queryLogs({});
-  const stepMap = new Map<string, { count: number; totalCost: number; totalSavings: number }>();
-  const toolMap = new Map<string, { count: number; totalCost: number; totalSavings: number }>();
+  // ISSUE-036: Use SQL-level aggregation instead of loading all rows into memory
+  const stepRows = db.getStepSummary(timeRange);
+  const toolRows = db.getToolSummary(timeRange);
 
-  for (const log of logs) {
-    const step = log.step_type as string;
-    const tool = log.tool as string;
-    const cost = (log.actual_cost as number) ?? 0;
-    const savings = (log.savings as number) ?? 0;
-
-    const stepEntry = stepMap.get(step) ?? { count: 0, totalCost: 0, totalSavings: 0 };
-    stepEntry.count++;
-    stepEntry.totalCost += cost;
-    stepEntry.totalSavings += savings;
-    stepMap.set(step, stepEntry);
-
-    const toolEntry = toolMap.get(tool) ?? { count: 0, totalCost: 0, totalSavings: 0 };
-    toolEntry.count++;
-    toolEntry.totalCost += cost;
-    toolEntry.totalSavings += savings;
-    toolMap.set(tool, toolEntry);
-  }
-
-  const byStep: StepReport[] = Array.from(stepMap.entries()).map(([stepType, data]) => ({
-    stepType,
-    count: data.count,
-    totalCost: data.totalCost,
-    totalSavings: data.totalSavings,
-    avgSavingsPct: data.totalCost > 0 ? (data.totalSavings / (data.totalCost + data.totalSavings)) * 100 : 0,
+  const byStep: StepReport[] = stepRows.map((row) => ({
+    stepType: row.key,
+    count: row.count,
+    totalCost: row.totalCost,
+    totalSavings: row.totalSavings,
+    // ISSUE-037: guard against division by zero
+    avgSavingsPct: (() => { const denom = row.totalCost + row.totalSavings; return Math.abs(denom) > 0.01 ? (row.totalSavings / denom) * 100 : 0; })(),
   }));
 
-  const byTool: ToolReport[] = Array.from(toolMap.entries()).map(([tool, data]) => ({
-    tool,
-    count: data.count,
-    totalCost: data.totalCost,
-    totalSavings: data.totalSavings,
+  const byTool: ToolReport[] = toolRows.map((row) => ({
+    tool: row.key,
+    count: row.count,
+    totalCost: row.totalCost,
+    totalSavings: row.totalSavings,
   }));
 
   return {

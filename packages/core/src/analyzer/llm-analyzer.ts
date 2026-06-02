@@ -1,5 +1,6 @@
 import type { StepAnalysis, LLMAnalysisInput, Message } from "./types.js";
 import { extractTaskFromMessages } from "./types.js";
+import { estimateTokensFromMessages } from "../utils/tokens.js";
 
 export function buildAnalyzerPrompt(input: LLMAnalysisInput): string {
   return `你是一个 AI Agent 步骤分析器。根据以下信息判断这个步骤的难度和推荐模型等级。
@@ -41,7 +42,7 @@ export async function analyzeWithLLM(
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
-        "x-agentdispatch-internal": "true",
+        "x-agentfare-internal": "true",
       },
       body: JSON.stringify({
         model: analyzerModelId,
@@ -64,7 +65,8 @@ export async function analyzeWithLLM(
       difficulty: clamp(json.difficulty, 0, 1),
       confidence: clamp(json.confidence, 0, 1),
       recommendedTier,
-      recommendedModel: "",
+      // ISSUE-029: parse recommendedModel from LLM output when present
+      recommendedModel: typeof json.recommendedModel === "string" && json.recommendedModel ? json.recommendedModel : "",
       reasoning: json.reasoning ?? "",
       needsProviderSwitch: false,
       estimatedTokens,
@@ -99,23 +101,4 @@ function buildAlternatives(recommendedTier: string): StepAnalysis["alternatives"
   return tiers.map((t) => ({ model: "", tier: t.tier, costSavingsVsRecommended: t.costSavingsVsRecommended, qualityRisk: t.qualityRisk }));
 }
 
-function estimateTokensFromMessages(messages: Message[]): { input: number; output: number } {
-  let totalChars = 0;
-  for (const m of messages) {
-    if (typeof m.content === "string") {
-      totalChars += m.content.length;
-    } else if (Array.isArray(m.content)) {
-      for (const block of m.content) {
-        if (block.text) totalChars += block.text.length;
-      }
-    }
-    if (m.tool_calls) {
-      for (const tc of m.tool_calls) {
-        totalChars += tc.function.arguments.length;
-      }
-    }
-  }
-  const inputTokens = Math.ceil(totalChars / 4);
-  const outputTokens = Math.ceil(inputTokens * 0.3);
-  return { input: inputTokens, output: outputTokens };
-}
+

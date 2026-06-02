@@ -1,16 +1,6 @@
-import type { ModelRegistry, ModelEntry, ModelTier } from "@agentdispatch/models";
+import type { ModelRegistry, ModelEntry, ModelTier } from "@agentfare/models";
+import { getApiKeyForProvider } from "@agentfare/models";
 import type { RoutingConfig } from "../config/types.js";
-
-const ENV_KEY_MAP: Record<string, string> = {
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  deepseek: "DEEPSEEK_API_KEY",
-  zhipu: "ZHIPU_API_KEY",
-  moonshot: "MOONSHOT_API_KEY",
-  alibaba: "ALIBABA_API_KEY",
-  xiaomi: "XIAOMI_API_KEY",
-  google: "GOOGLE_API_KEY",
-};
 
 export function tryCrossProviderOptIn(
   registry: ModelRegistry,
@@ -22,8 +12,7 @@ export function tryCrossProviderOptIn(
     return null;
   }
 
-  const envKey = ENV_KEY_MAP[targetProvider];
-  const apiKey = envKey ? process.env[envKey] : undefined;
+  const apiKey = getApiKeyForProvider(targetProvider);
   if (!apiKey) {
     return null;
   }
@@ -35,6 +24,5 @@ export function tryCrossProviderOptIn(
 }
 
 export function getEnvKey(provider: string): string | undefined {
-  const envKey = ENV_KEY_MAP[provider];
-  return envKey ? process.env[envKey] : undefined;
+  return getApiKeyForProvider(provider);
 }

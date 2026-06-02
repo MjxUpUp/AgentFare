@@ -1,4 +1,4 @@
-import type { AgentDispatchConfig, EnterpriseConfig } from "./types.js";
+import type { AgentFareConfig, EnterpriseConfig } from "./types.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
 import { applyEnterprisePolicy } from "./enterprise.js";
 import * as fs from "node:fs";
@@ -7,12 +7,12 @@ import * as os from "node:os";
 
 interface ConfigSources {
   enterprise?: EnterpriseConfig;
-  global?: Partial<AgentDispatchConfig>;
-  project?: Partial<AgentDispatchConfig>;
+  global?: Partial<AgentFareConfig>;
+  project?: Partial<AgentFareConfig>;
 }
 
-export function mergeConfig(sources: ConfigSources = {}): AgentDispatchConfig {
-  let config: AgentDispatchConfig = structuredClone(DEFAULT_CONFIG);
+export function mergeConfig(sources: ConfigSources = {}): AgentFareConfig {
+  let config: AgentFareConfig = structuredClone(DEFAULT_CONFIG);
 
   if (sources.global) {
     config = deepMerge(config, sources.global);
@@ -27,7 +27,7 @@ export function mergeConfig(sources: ConfigSources = {}): AgentDispatchConfig {
     config = result.config;
     if (result.warnings.length > 0) {
       for (const w of result.warnings) {
-        console.warn(`[AgentDispatch] ${w}`);
+        console.warn(`[AgentFare] ${w}`);
       }
     }
   }
@@ -35,29 +35,41 @@ export function mergeConfig(sources: ConfigSources = {}): AgentDispatchConfig {
   return config;
 }
 
-export function loadConfigFromDisk(projectDir?: string): AgentDispatchConfig {
+export function loadConfigFromDisk(projectDir?: string): AgentFareConfig {
   const sources: ConfigSources = {};
 
   const enterprisePaths = [
-    "/etc/agentdispatch/enterprise.json",
-    path.join(os.homedir(), ".agentdispatch", "enterprise.json"),
+    "/etc/agentfare/enterprise.json",
+    path.join(os.homedir(), ".agentfare", "enterprise.json"),
   ];
   for (const p of enterprisePaths) {
     if (fs.existsSync(p)) {
-      sources.enterprise = JSON.parse(fs.readFileSync(p, "utf-8"));
+      try {
+        sources.enterprise = JSON.parse(fs.readFileSync(p, "utf-8"));
+      } catch (e) {
+        throw new Error(`Failed to parse enterprise config ${p}: ${e instanceof Error ? e.message : e}`);
+      }
       break;
     }
   }
 
-  const globalPath = path.join(os.homedir(), ".agentdispatch", "config.json");
+  const globalPath = path.join(os.homedir(), ".agentfare", "config.json");
   if (fs.existsSync(globalPath)) {
-    sources.global = JSON.parse(fs.readFileSync(globalPath, "utf-8"));
+    try {
+      sources.global = JSON.parse(fs.readFileSync(globalPath, "utf-8"));
+    } catch (e) {
+      throw new Error(`Failed to parse global config ${globalPath}: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   const projDir = projectDir ?? process.cwd();
-  const projectPath = path.join(projDir, "agentdispatch.config.json");
+  const projectPath = path.join(projDir, "agentfare.config.json");
   if (fs.existsSync(projectPath)) {
-    sources.project = JSON.parse(fs.readFileSync(projectPath, "utf-8"));
+    try {
+      sources.project = JSON.parse(fs.readFileSync(projectPath, "utf-8"));
+    } catch (e) {
+      throw new Error(`Failed to parse project config ${projectPath}: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   return mergeConfig(sources);

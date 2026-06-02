@@ -1,6 +1,6 @@
-import type { AgentDispatchConfig } from "./types.js";
+import type { AgentFareConfig } from "./types.js";
 
-export const DEFAULT_CONFIG: AgentDispatchConfig = {
+export const DEFAULT_CONFIG: AgentFareConfig = {
   models: {
     fast: ["openai/gpt-5.3-codex-spark", "anthropic/claude-haiku-4-5", "deepseek/v4-flash"],
     standard: ["openai/gpt-5.4", "anthropic/claude-sonnet-4-6", "deepseek/v4-pro", "alibaba/qwen3-max"],
@@ -26,7 +26,7 @@ export const DEFAULT_CONFIG: AgentDispatchConfig = {
   customModels: [],
   tracking: {
     enabled: true,
-    storePath: "./agentdispatch-data/",
+    storePath: "./agentfare-data/",
     reportFormat: "json",
   },
   onlineLearning: {

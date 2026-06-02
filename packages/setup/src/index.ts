@@ -4,17 +4,17 @@ import { validateHookInjection } from "./validator.js";
 import { reportStatus } from "./reporter.js";
 
 export { detectTools, detectPlatform } from "./detector.js";
-export { generateShellFunctions, writeShellConfig } from "./shell-writer.js";
+export { generateShellFunctions, writeShellConfig, generatePowerShellFunctions, getPowerShellProfilePath, writePowerShellProfile, writeConfig } from "./shell-writer.js";
 export { validateHookInjection } from "./validator.js";
 export { reportStatus } from "./reporter.js";
 
-async function main() {
+/**
+ * Run the full setup flow. ISSUE-030: exported instead of auto-executed on import.
+ */
+export async function runSetup(): Promise<void> {
   const platform = detectPlatform();
   if (platform === "windows-native") {
-    console.error(
-      "Native Windows is not supported. Please run via WSL2."
-    );
-    process.exit(1);
+    console.warn("[AgentFare] Windows 原生平台支持为实验性功能，部分功能可能受限");
   }
   console.log(`detected platform: ${platform}`);
 
@@ -37,8 +37,3 @@ async function main() {
 
   reportStatus(tools);
 }
-
-main().catch((err) => {
-  console.error("setup failed:", err);
-  process.exit(1);
-});

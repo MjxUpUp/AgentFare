@@ -1,12 +1,12 @@
-import type { AgentDispatchConfig, EnterpriseConfig } from "./types.js";
+import type { AgentFareConfig, EnterpriseConfig } from "./types.js";
 
 export interface EnterprisePolicyResult {
-  config: AgentDispatchConfig;
+  config: AgentFareConfig;
   warnings: string[];
 }
 
 export function applyEnterprisePolicy(
-  userConfig: AgentDispatchConfig,
+  userConfig: AgentFareConfig,
   enterpriseConfig?: EnterpriseConfig
 ): EnterprisePolicyResult {
   const warnings: string[] = [];

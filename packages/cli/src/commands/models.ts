@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { ModelRegistry } from "@agentdispatch/models";
+import { ModelRegistry, fetchRemoteModels, mergeRemoteModels, saveRemoteModels, BUILTIN_MODELS } from "@agentfare/models";
 
 export const modelsCommand = new Command("models").description(
   "模型管理"
@@ -27,5 +27,17 @@ modelsCommand
   .command("update")
   .description("手动拉取最新模型数据")
   .action(async () => {
-    console.log("远程模型数据更新功能尚未实现 (spec 8.3)");
+    try {
+      const remote = await fetchRemoteModels();
+      if (remote.length === 0) {
+        console.log("没有可用的远程模型更新");
+        return;
+      }
+      const merged = mergeRemoteModels(BUILTIN_MODELS, remote);
+      saveRemoteModels(merged);
+      console.log(`更新完成: ${remote.length} 个模型已更新`);
+    } catch (err) {
+      console.error(`远程更新失败: ${(err as Error).message}`);
+      process.exit(1);
+    }
   });

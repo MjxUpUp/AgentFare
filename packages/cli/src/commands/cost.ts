@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { TrackingDatabase } from "@agentdispatch/core";
+import { TrackingDatabase } from "@agentfare/core";
 import * as path from "node:path";
 import * as os from "node:os";
 
@@ -8,9 +8,10 @@ export const costCommand = new Command("cost")
   .option("--last <period>", "时间范围 (1d, 7d, 30d)", "30d")
   .option("--json", "JSON 格式输出", false)
   .action((opts) => {
-    const dbPath = path.join(os.homedir(), ".agentdispatch", "data.db");
-    const db = new TrackingDatabase(dbPath);
+    const dbPath = path.join(os.homedir(), ".agentfare", "data.db");
+    let db: TrackingDatabase | undefined;
     try {
+      db = new TrackingDatabase(dbPath);
       const summary = db.getCostSummary(opts.last);
       const pct =
         summary.totalOriginalCost > 0
@@ -21,7 +22,7 @@ export const costCommand = new Command("cost")
       if (opts.json) {
         console.log(JSON.stringify(summary, null, 2));
       } else {
-        console.log(`\n  AgentDispatch Cost Report`);
+        console.log(`\n  AgentFare Cost Report`);
         console.log(`  ${"─".repeat(40)}`);
         console.log(`  Total requests:    ${summary.totalRequests}`);
         console.log(
@@ -34,7 +35,10 @@ export const costCommand = new Command("cost")
           `  Savings:           $${summary.totalSavings.toFixed(2)} (${pct}%)\n`
         );
       }
+    } catch (err) {
+      console.error(`无法打开数据库: ${(err as Error).message}`);
+      process.exit(1);
     } finally {
-      db.close();
+      db?.close?.();
     }
   });

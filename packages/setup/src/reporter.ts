@@ -12,6 +12,6 @@ export function reportStatus(tools: DetectedTool[]): void {
   console.log(`\ncross-provider routing:`);
   console.log(`  mode: off (same-provider only)`);
   console.log(
-    `  enable with: agentdispatch config set routing.crossProvider opt-in\n`
+    `  enable with: agentfare config set routing.crossProvider opt-in\n`
   );
 }

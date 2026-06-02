@@ -20,6 +20,13 @@ export class QualitySignalCollector {
     string,
     { model: string; stepType: string; timestamp: number }
   > = new Map();
+  private signals: Array<{
+    sessionId: string;
+    model: string;
+    stepType: string;
+    signal: QualitySignal;
+    timestamp: number;
+  }> = [];
 
   recordRoutedModel(sessionId: string, model: string, tier: string): void {
     this.lastRoutedModels.set(sessionId, model);
@@ -60,17 +67,60 @@ export class QualitySignalCollector {
   recordSignal(
     model: string,
     stepType: string,
-    signal: QualitySignal
+    signal: QualitySignal,
+    sessionId?: string
   ): void {
-    // Signal consumed by OnlineLearner
+    this.signals.push({
+      sessionId: sessionId ?? "",
+      model,
+      stepType,
+      signal,
+      timestamp: Date.now(),
+    });
+    // Keep bounded to prevent memory leak
+    if (this.signals.length > 1000) {
+      this.signals = this.signals.slice(-500);
+    }
+  }
+
+  getSignals(): Array<{
+    sessionId: string;
+    model: string;
+    stepType: string;
+    signal: QualitySignal;
+    timestamp: number;
+  }> {
+    return this.signals;
   }
 
   inferFinalSignal(sessionId: string): QualitySignalEvent | null {
     const last = this.sessionLastRequest.get(sessionId);
     if (!last) return null;
+
+    // Find the worst signal for this session: error > task_abandoned > retry > manual_switch > success
+    const priority: Record<QualitySignal, number> = {
+      error: 4,
+      task_abandoned: 3,
+      retry: 2,
+      manual_switch: 1,
+      success: 0,
+    };
+    const sessionSignals = this.signals.filter(
+      (s) => s.sessionId === sessionId
+    );
+    let worstSignal: QualitySignal = "success";
+    let worstPriority = 0;
+    for (const s of sessionSignals) {
+      const p = priority[s.signal] ?? 0;
+      if (p > worstPriority) {
+        worstPriority = p;
+        worstSignal = s.signal;
+      }
+    }
+
     return {
       sessionId,
-      signal: "success",
+      signal: worstSignal,
       model: last.model,
       stepType: last.stepType,
       timestamp: new Date(),

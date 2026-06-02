@@ -1,11 +1,11 @@
 import type { TrackingDatabase, RoutingLogEntry } from "./database.js";
 import type { StepAnalysis } from "../analyzer/types.js";
-import type { ModelEntry } from "@agentdispatch/models";
+import type { ModelEntry } from "@agentfare/models";
 
 export class CostTracker {
   constructor(private db: TrackingDatabase) {}
 
-  async recordAsync(
+  record(
     analysis: StepAnalysis,
     originalModel: string,
     originalModelEntry: ModelEntry | undefined,
@@ -13,7 +13,7 @@ export class CostTracker {
     sessionId: string,
     tool: string,
     tokenUsage: { input: number; output: number }
-  ): Promise<void> {
+  ): void {
     const originalCost = originalModelEntry
       ? this.calculateCostFromEntry(originalModelEntry, tokenUsage)
       : 0;

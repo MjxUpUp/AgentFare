@@ -14,16 +14,16 @@ export function convertAnthropicSSEToOpenAI(sseChunk: string, model: string): st
 
   switch (data.type) {
     case "message_start": {
-      const id = data.message?.id ?? "chatcmpl-agentdispatch";
+      const id = data.message?.id ?? "chatcmpl-agentfare";
       return `data: ${JSON.stringify({ id, object: "chat.completion.chunk", model, choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`;
     }
     case "content_block_delta": {
       const text = data.delta?.text ?? "";
-      return `data: ${JSON.stringify({ id: "chatcmpl-agentdispatch", object: "chat.completion.chunk", model, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n`;
+      return `data: ${JSON.stringify({ id: "chatcmpl-agentfare", object: "chat.completion.chunk", model, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n`;
     }
     case "message_delta": {
       const finishReason = data.delta?.stop_reason === "tool_use" ? "tool_calls" : "stop";
-      return `data: ${JSON.stringify({ id: "chatcmpl-agentdispatch", object: "chat.completion.chunk", model, choices: [{ index: 0, delta: {}, finish_reason: finishReason }] })}\n\n`;
+      return `data: ${JSON.stringify({ id: "chatcmpl-agentfare", object: "chat.completion.chunk", model, choices: [{ index: 0, delta: {}, finish_reason: finishReason }] })}\n\n`;
     }
     case "message_stop":
       return "data: [DONE]\n\n";

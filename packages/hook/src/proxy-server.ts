@@ -1,3 +1,10 @@
+/**
+ * @deprecated Use @agentfare/proxy instead.
+ *
+ * The proxy server implementation has moved to the @agentfare/proxy package.
+ * This stub is kept for backward compatibility — importing it will log a warning.
+ */
+
 import * as http from "node:http";
 
 export interface ProxyServerOptions {
@@ -6,21 +13,18 @@ export interface ProxyServerOptions {
 }
 
 export function startProxyServer(options: ProxyServerOptions): http.Server {
-  const server = http.createServer((req, res) => {
-    // Simple pass-through proxy
-    // In production, this would route through the RequestHandler
-    const targetUrl = options.targetUpstream ?? `http://localhost:${options.port}`;
+  console.warn("[AgentFare] WARNING: startProxyServer has moved to @agentfare/proxy. This stub will be removed in a future version.");
 
-    let body = "";
-    req.on("data", (chunk) => { body += chunk; });
-    req.on("end", () => {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", message: "AgentDispatch proxy mode - not yet fully implemented" }));
-    });
+  const server = http.createServer((_req, res) => {
+    res.writeHead(501, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      status: "deprecated",
+      message: "Proxy server has moved to @agentfare/proxy. Install and use that package instead.",
+    }));
   });
 
   server.listen(options.port, () => {
-    console.log(`[AgentDispatch] Proxy server started on port ${options.port}`);
+    console.log(`[AgentFare] Proxy stub on port ${options.port} (deprecated)`);
   });
 
   return server;

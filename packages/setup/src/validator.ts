@@ -13,7 +13,7 @@ export function validateHookInjection(): {
       );
     };
     try {
-      globalThis.fetch("https://test.agentdispatch.local/ping");
+      globalThis.fetch("https://test.agentfare.local/ping");
     } catch {
       // Expected — we're not actually making a real request
     }
@@ -23,7 +23,7 @@ export function validateHookInjection(): {
       available: false,
       mode: "proxy-required",
       reason:
-        "fetch 拦截不可用，请使用 Proxy 模式：agentdispatch init --mode proxy",
+        "fetch 拦截不可用，请使用 Proxy 模式：agentfare init --mode proxy",
     };
   } catch (err) {
     return {

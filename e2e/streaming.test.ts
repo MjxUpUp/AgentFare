@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { installFetchPatch } from "@agentdispatch/hook/fetch-patch";
-import { RequestHandler } from "@agentdispatch/hook/request-handler";
-import { DEFAULT_CONFIG } from "@agentdispatch/core";
-import { ModelRegistry } from "@agentdispatch/models";
+import { installFetchPatch } from "@agentfare/hook/fetch-patch";
+import { RequestHandler } from "@agentfare/hook/request-handler";
+import { DEFAULT_CONFIG } from "@agentfare/core";
+import { ModelRegistry } from "@agentfare/models";
 
 describe("E2E: Streaming response handling", () => {
   let originalFetch: typeof globalThis.fetch;

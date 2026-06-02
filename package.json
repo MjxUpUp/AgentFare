@@ -1,10 +1,12 @@
 {
-  "name": "agentdispatch-monorepo",
+  "name": "agentfare-monorepo",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "build": "turbo build",
     "test": "turbo test",
     "test:watch": "turbo test:watch",
+    "test:e2e": "vitest run e2e/",
     "lint": "turbo lint"
   },
   "devDependencies": {

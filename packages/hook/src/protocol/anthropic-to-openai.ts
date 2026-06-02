@@ -3,7 +3,7 @@ export function convertAnthropicToOpenAIResponse(
   model: string,
 ): any {
   return {
-    id: anthropicResp.id ?? "chatcmpl-agentdispatch",
+    id: anthropicResp.id ?? "chatcmpl-agentfare",
     object: "chat.completion",
     model,
     choices: [{

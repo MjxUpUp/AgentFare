@@ -39,7 +39,10 @@ export async function evaluateCombo(
   fetchFn: typeof globalThis.fetch,
   options?: { baseUrl?: string; apiKey?: string; metric?: string },
 ): Promise<EvalResult> {
+  // ISSUE-033: for multi-step pipelines, concatenate all models into the prompt
+  // so the eval considers the full combo rather than only the first model.
   const modelId = Object.values(combo)[0] ?? "";
+  const comboDescription = Object.entries(combo).map(([step, model]) => `${step}=${model}`).join('|');
   const baseUrl = options?.baseUrl ?? "https://api.openai.com/v1";
   const url = `${baseUrl}/chat/completions`;
   const results: EvalResult["samples"] = [];
@@ -59,7 +62,7 @@ export async function evaluateCombo(
         },
         body: JSON.stringify({
           model: modelId,
-          messages: [{ role: "user", content: sample.input }],
+          messages: [{ role: "user", content: `[pipeline: ${comboDescription}] ${sample.input}` }],
           max_tokens: 100,
         }),
       });

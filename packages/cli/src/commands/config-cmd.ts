@@ -11,7 +11,7 @@ configCommand
   .command("set <key> <value>")
   .description("设置配置项")
   .action((key, value) => {
-    const configPath = path.join(os.homedir(), ".agentdispatch", "config.json");
+    const configPath = path.join(os.homedir(), ".agentfare", "config.json");
     let config: Record<string, unknown> = {};
     if (fs.existsSync(configPath))
       config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
@@ -27,7 +27,7 @@ configCommand
   .action((key) => {
     const configPath = path.join(
       os.homedir(),
-      ".agentdispatch",
+      ".agentfare",
       "config.json"
     );
     if (!fs.existsSync(configPath)) {
@@ -41,12 +41,18 @@ configCommand
     console.log(value !== undefined ? JSON.stringify(value) : "not found");
   });
 
-function setNestedValue(
+// ISSUE-054: exported for testing — validates and sets a nested config value.
+export function setNestedValue(
   obj: Record<string, unknown>,
   key: string,
   value: string
 ): void {
+  const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+  const SAFE_KEY = /^[a-zA-Z0-9_-]+$/;
   const parts = key.split(".");
+  if (parts.some(p => UNSAFE_KEYS.has(p) || !SAFE_KEY.test(p))) {
+    throw new Error(`Invalid config key: ${key} (each segment must match ${SAFE_KEY.source})`);
+  }
   let current: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     if (!current[parts[i]]) current[parts[i]] = {};

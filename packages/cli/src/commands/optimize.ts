@@ -3,8 +3,10 @@ import {
   parsePipelineYAML,
   bruteForceSearch,
   epsilonLucbSearch,
-} from "@agentdispatch/core";
-import { ModelRegistry } from "@agentdispatch/models";
+  armEliminationSearch,
+  hillClimbingSearch,
+} from "@agentfare/core";
+import { ModelRegistry } from "@agentfare/models";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -13,7 +15,7 @@ export const optimizeCommand = new Command("optimize")
   .option("--pipeline <file>", "指定 pipeline 定义文件 (YAML)")
   .option(
     "--algorithm <algo>",
-    "搜索算法 (brute_force | epsilon_lucb | arm_elimination)",
+    "搜索算法 (brute_force | epsilon_lucb | arm_elimination | hill_climbing)",
     "epsilon_lucb"
   )
   .option("--max-evals <n>", "最大评估次数", "50")
@@ -36,10 +38,22 @@ export const optimizeCommand = new Command("optimize")
         return sum + entry.pricing.inputPerMillion + entry.pricing.outputPerMillion;
       }, 0);
 
-    const results =
-      opts.algorithm === "brute_force"
-        ? bruteForceSearch(pipeline, costFn)
-        : epsilonLucbSearch(pipeline, costFn);
+    let results;
+    switch (opts.algorithm) {
+      case "brute_force":
+        results = bruteForceSearch(pipeline, costFn);
+        break;
+      case "arm_elimination":
+        results = armEliminationSearch(pipeline, costFn);
+        break;
+      case "hill_climbing":
+        results = hillClimbingSearch(pipeline, costFn);
+        break;
+      case "epsilon_lucb":
+      default:
+        results = epsilonLucbSearch(pipeline, costFn);
+        break;
+    }
 
     console.log(`\n优化结果 (${pipeline.name})`);
     console.log(`${"─".repeat(50)}`);
@@ -50,7 +64,7 @@ export const optimizeCommand = new Command("optimize")
       console.log(`    预估成本: $${combo.estimatedCost.toFixed(2)}`);
     }
 
-    const outputPath = path.join(process.cwd(), "agentdispatch-optimized.json");
+    const outputPath = path.join(process.cwd(), "agentfare-optimized.json");
     fs.writeFileSync(
       outputPath,
       JSON.stringify(

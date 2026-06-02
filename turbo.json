@@ -12,6 +12,11 @@
     "test:watch": {
       "cache": false,
       "persistent": true
+    },
+    "e2e": {
+      "dependsOn": ["build"],
+      "inputs": ["e2e/**/*.test.ts"],
+      "outputs": []
     }
   }
 }

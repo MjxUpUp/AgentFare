@@ -3,8 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-const REMOTE_URL = "https://raw.githubusercontent.com/agentdispatch/models/main/models.json";
-const CACHE_PATH = path.join(os.homedir(), ".agentdispatch", "cache", "remote-models.json");
+const REMOTE_URL = "https://raw.githubusercontent.com/agentfare/models/main/models.json";
+const CACHE_PATH = path.join(os.homedir(), ".agentfare", "cache", "remote-models.json");
 
 export async function fetchRemoteModels(): Promise<ModelEntry[]> {
   try {
@@ -12,7 +12,7 @@ export async function fetchRemoteModels(): Promise<ModelEntry[]> {
     if (!response.ok) return [];
     const data = await response.json();
     if (!Array.isArray(data)) return [];
-    return data as ModelEntry[];
+    return validateModelEntries(data);
   } catch {
     return [];
   }
@@ -36,6 +36,45 @@ export function saveRemoteModels(models: ModelEntry[]): void {
 export function loadCachedRemoteModels(): ModelEntry[] {
   try {
     if (!fs.existsSync(CACHE_PATH)) return [];
-    return JSON.parse(fs.readFileSync(CACHE_PATH, "utf-8"));
+    const data = JSON.parse(fs.readFileSync(CACHE_PATH, "utf-8"));
+    return validateModelEntries(data);
   } catch { return []; }
+}
+
+export function validateModelEntries(data: unknown): ModelEntry[] {
+  if (!Array.isArray(data)) return [];
+  const valid: ModelEntry[] = [];
+  for (let i = 0; i < data.length; i++) {
+    const entry = data[i] as any;
+    if (!entry || typeof entry !== "object") continue;
+    if (typeof entry.id !== "string" || !entry.id) continue;
+    if (typeof entry.provider !== "string" || !entry.provider) continue;
+    if (typeof entry.displayName !== "string") continue;
+    if (!["fast", "standard", "powerful"].includes(entry.tier)) continue;
+    if (
+      !entry.pricing ||
+      typeof entry.pricing.inputPerMillion !== "number" ||
+      entry.pricing.inputPerMillion < 0 ||
+      typeof entry.pricing.outputPerMillion !== "number" ||
+      entry.pricing.outputPerMillion < 0
+    ) continue;
+    if (
+      !entry.api ||
+      typeof entry.api.baseUrl !== "string" ||
+      !entry.api.baseUrl ||
+      typeof entry.api.modelId !== "string" ||
+      !entry.api.modelId ||
+      !["openai", "anthropic"].includes(entry.api?.protocol)
+    ) continue;
+    // Fill defaults for optional fields
+    if (!entry.capabilities) {
+      entry.capabilities = { codeGeneration: 5, codeReview: 5, planning: 5, reasoning: 5, toolUse: 5, contextWindow: 32, maxOutputTokens: 4, streaming: true, jsonMode: false };
+    }
+    if (!entry.routing) {
+      entry.routing = { avgLatencyMs: 1000, tokensPerSecond: 50, availability: 0.99, region: ["global"] };
+    }
+
+    valid.push(entry as ModelEntry);
+  }
+  return valid;
 }

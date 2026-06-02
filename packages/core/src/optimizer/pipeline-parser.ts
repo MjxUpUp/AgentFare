@@ -1,5 +1,20 @@
 import type { Pipeline } from "./types.js";
 
+/**
+ * ISSUE-043: Robust key-value extraction that handles colons inside values.
+ */
+function extractValue(line: string, key: string): string | null {
+  const prefix = key + ":";
+  if (!line.startsWith(prefix)) return null;
+  let value = line.slice(prefix.length).trim();
+  if (value.startsWith('"') && value.endsWith('"')) {
+    value = value.slice(1, -1);
+  } else if (value.startsWith("'") && value.endsWith("'")) {
+    value = value.slice(1, -1);
+  }
+  return value;
+}
+
 export function parsePipelineYAML(yaml: string): Pipeline {
   const lines = yaml.split("\n");
   let name = "";
@@ -13,32 +28,30 @@ export function parsePipelineYAML(yaml: string): Pipeline {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith("name:"))
-      name = trimmed
-        .split(":")
-        .slice(1)
-        .join(":")
-        .trim()
-        .replace(/"/g, "");
-    if (trimmed.startsWith("- id:")) {
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const nameVal = extractValue(trimmed, "name");
+    if (nameVal !== null) {
+      name = nameVal;
+      continue;
+    }
+    const idVal = extractValue(trimmed, "- id");
+    if (idVal !== null) {
       if (currentStep) steps.push(currentStep);
       currentStep = {
-        id: trimmed
-          .split(":")[1]
-          .trim()
-          .replace(/"/g, ""),
+        id: idVal,
         description: "",
         candidateModels: [],
       };
       inCandidates = false;
+      continue;
     }
-    if (currentStep && trimmed.startsWith("description:"))
-      currentStep.description = trimmed
-        .split(":")
-        .slice(1)
-        .join(":")
-        .trim()
-        .replace(/"/g, "");
+    if (currentStep) {
+      const descVal = extractValue(trimmed, "description");
+      if (descVal !== null) {
+        currentStep.description = descVal;
+        continue;
+      }
+    }
     if (currentStep && trimmed.startsWith("candidates:")) {
       inCandidates = true;
       continue;

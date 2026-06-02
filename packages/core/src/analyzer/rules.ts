@@ -1,4 +1,5 @@
 import type { StepAnalysis, StepAnalysisRequest, Message } from "./types.js";
+import { estimateTokensFromMessages } from "../utils/tokens.js";
 
 const SIMPLE_TOOL_PATTERNS = [
   /\b(list|ls|cat|head|tail|find|grep|glob|which|where|pwd)\b/i,
@@ -61,6 +62,7 @@ export function analyzeStepRules(request: StepAnalysisRequest): StepAnalysis | n
     return false;
   });
 
+  // ISSUE-027: use shared estimateTokensFromMessages from utils/tokens.ts
   const estimatedTokens = estimateTokensFromMessages(messages);
 
   // Rule: confirmation
@@ -236,30 +238,6 @@ export function analyzeStepRules(request: StepAnalysisRequest): StepAnalysis | n
   }
 
   return null;
-}
-
-function estimateTokensFromMessages(messages: Message[]): {
-  input: number;
-  output: number;
-} {
-  let totalChars = 0;
-  for (const m of messages) {
-    if (typeof m.content === "string") {
-      totalChars += m.content.length;
-    } else if (Array.isArray(m.content)) {
-      for (const block of m.content) {
-        if (block.text) totalChars += block.text.length;
-      }
-    }
-    if (m.tool_calls) {
-      for (const tc of m.tool_calls) {
-        totalChars += tc.function.arguments.length;
-      }
-    }
-  }
-  const inputTokens = Math.ceil(totalChars / 4);
-  const outputTokens = Math.ceil(inputTokens * 0.3);
-  return { input: inputTokens, output: outputTokens };
 }
 
 function isMatch(text: string, patterns: RegExp[]): boolean {

@@ -1,4 +1,4 @@
-import type { ModelTier } from "@agentdispatch/models";
+import type { ModelTier } from "@agentfare/models";
 
 export type StepType =
   | "planning"

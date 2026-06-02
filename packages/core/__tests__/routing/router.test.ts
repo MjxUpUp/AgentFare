@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Router } from "../../src/routing/router.js";
-import { ModelRegistry } from "@agentdispatch/models";
-import type { AgentDispatchConfig } from "../../src/config/types.js";
+import { ModelRegistry } from "@agentfare/models";
+import type { AgentFareConfig } from "../../src/config/types.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { StepAnalysis } from "../../src/analyzer/types.js";
 
@@ -23,7 +23,7 @@ function makeAnalysis(overrides: Partial<StepAnalysis> = {}): StepAnalysis {
 describe("Router", () => {
   const registry = new ModelRegistry();
 
-  function makeRouter(config: Partial<AgentDispatchConfig> = {}): Router {
+  function makeRouter(config: Partial<AgentFareConfig> = {}): Router {
     const merged = {
       ...DEFAULT_CONFIG,
       ...config,
@@ -161,10 +161,10 @@ describe("Router", () => {
       recommendedModel: "",
     });
 
-    // OpenAI has two fast models: gpt-5.3-codex-spark ($2/M) and gpt-5.4-mini ($1/M)
+    // OpenAI has two fast models: gpt-5.3-codex-spark ($0.35/M output) and gpt-5.4-mini ($4.50/M output)
     const result = router.decide("https://api.openai.com/v1/chat/completions", analysis);
     expect(result.targetModel!.provider).toBe("openai");
-    expect(result.targetModel!.id).toBe("openai/gpt-5.4-mini");
+    expect(result.targetModel!.id).toBe("openai/gpt-5.3-codex-spark");
   });
 
   it("should use quality-first strategy to pick best model", () => {
@@ -238,5 +238,107 @@ describe("Router", () => {
     // Tier "fast" not allowed, falls back to same provider
     expect(result.targetModel!.provider).toBe("openai");
     expect(result.providerSwitched).toBe(false);
+  });
+});
+
+describe("Router — enterprise and cross-provider integration", () => {
+  const registry = new ModelRegistry();
+
+  function makeRouter(config: Partial<AgentFareConfig> = {}): Router {
+    const merged = {
+      ...DEFAULT_CONFIG,
+      ...config,
+      routing: { ...DEFAULT_CONFIG.routing, ...config.routing },
+    };
+    return new Router(merged, registry);
+  }
+
+  it("enterprise mode: allowedTiers restriction enforced (target tier not in allowedTiers → fallback)", () => {
+    // Enterprise config only allows "powerful" tier, but analysis recommends "fast"
+    const router = makeRouter({
+      routing: {
+        ...DEFAULT_CONFIG.routing,
+        crossProvider: "enterprise",
+        crossProviderProviders: ["deepseek"],
+        enterpriseProviders: {
+          deepseek: {
+            baseUrl: "https://enterprise.deepseek.com",
+            authMode: "corporate-sso",
+            allowedTiers: ["powerful"],  // Only powerful allowed
+          },
+        },
+      },
+    });
+
+    const analysis = makeAnalysis({
+      recommendedTier: "fast",  // Not in allowedTiers
+      recommendedModel: "deepseek/v4-flash",  // fast tier
+      reasoning: "fast task",
+    });
+
+    const result = router.decide("https://api.openai.com/v1/chat/completions", analysis);
+    // "fast" tier is not in allowedTiers ["powerful"], so enterprise rejects it
+    // Falls back to same-provider model
+    expect(result.targetModel!.provider).toBe("openai");
+    expect(result.providerSwitched).toBe(false);
+  });
+
+  it("enterprise mode: enterprise crossProvider 'off' overrides user 'opt-in'", () => {
+    // The router config has crossProvider: "off", which should prevent any cross-provider routing
+    // even if the analysis recommends a cross-provider model
+    const router = makeRouter({
+      routing: {
+        ...DEFAULT_CONFIG.routing,
+        crossProvider: "off",  // Enterprise sets "off"
+        crossProviderProviders: ["deepseek"],
+      },
+    });
+
+    process.env.DEEPSEEK_API_KEY = "test-key";
+
+    try {
+      const analysis = makeAnalysis({
+        recommendedTier: "fast",
+        recommendedModel: "deepseek/v4-flash",  // Cross-provider recommendation
+        reasoning: "user opted in but enterprise says off",
+      });
+
+      const result = router.decide("https://api.openai.com/v1/chat/completions", analysis);
+      // crossProvider=off must override any user preference
+      expect(result.providerSwitched).toBe(false);
+      expect(result.crossProviderMode).toBe("off");
+      // Should route to same provider
+      expect(result.targetModel!.provider).toBe("openai");
+    } finally {
+      delete process.env.DEEPSEEK_API_KEY;
+    }
+  });
+
+  it("recommendedModel non-empty triggers cross-provider branch (ISSUE-029 regression)", () => {
+    process.env.DEEPSEEK_API_KEY = "regression-test-key";
+
+    try {
+      const router = makeRouter({
+        routing: {
+          ...DEFAULT_CONFIG.routing,
+          crossProvider: "opt-in",
+          crossProviderProviders: ["deepseek"],
+        },
+      });
+
+      const analysis = makeAnalysis({
+        recommendedTier: "fast",
+        recommendedModel: "deepseek/v4-flash",  // Non-empty, cross-provider
+        reasoning: "ISSUE-029 regression test",
+      });
+
+      const result = router.decide("https://api.openai.com/v1/chat/completions", analysis);
+      // Should cross to deepseek since recommendedModel is set and provider differs
+      expect(result.targetModel!.provider).toBe("deepseek");
+      expect(result.providerSwitched).toBe(true);
+      expect(result.apiKey).toBe("regression-test-key");
+    } finally {
+      delete process.env.DEEPSEEK_API_KEY;
+    }
   });
 });

@@ -1,24 +1,33 @@
-export class AgentDispatchCallbackHandler {
-  name = "agentdispatch-callback";
+const WARNING_MSG = "[AgentFare] LangChain callback handler is not yet functional — all methods are no-ops";
 
-  async handleLLMStart(llm: any, prompts: string[]): Promise<void> {
-    // Placeholder for LangChain callback integration
-    // Actual integration requires @langchain/core dependency
+export class AgentFareCallbackHandler {
+  name = "agentfare-callback";
+  private _warned = false;
+
+  private _warn(): void {
+    if (!this._warned) {
+      console.warn(WARNING_MSG);
+      this._warned = true;
+    }
   }
 
-  async handleLLMEnd(output: any): Promise<void> {
-    // Record token usage to AgentDispatch tracker
+  async handleLLMStart(_llm: unknown, _prompts: string[]): Promise<void> {
+    this._warn();
   }
 
-  async handleLLMError(err: any): Promise<void> {
-    // Record error signal
+  async handleLLMEnd(_output: unknown): Promise<void> {
+    this._warn();
   }
 
-  async handleToolStart(tool: any, input: any): Promise<void> {
-    // Track tool usage for step classification
+  async handleLLMError(_err: unknown): Promise<void> {
+    this._warn();
   }
 
-  async handleToolEnd(output: any): Promise<void> {
-    // Record tool completion
+  async handleToolStart(_tool: unknown, _input: unknown): Promise<void> {
+    this._warn();
+  }
+
+  async handleToolEnd(_output: unknown): Promise<void> {
+    this._warn();
   }
 }

@@ -41,19 +41,53 @@ export function extractTokenUsageAnthropic(sseText: string): StreamTokenData | n
   return inputTokens > 0 || outputTokens > 0 ? { input: inputTokens, output: outputTokens } : null;
 }
 
+export type SSEProtocolConverter = (sseChunk: string) => string | null;
+
 export function createStreamingResponseWrapper(
   originalResponse: Response,
   protocol: "openai" | "anthropic",
   onTokens: (tokens: StreamTokenData) => void,
+  protocolConverter?: SSEProtocolConverter,
 ): Response {
+  const decoder = new TextDecoder();
+
   const { readable, writable } = new TransformStream({
     transform(chunk, controller) {
-      controller.enqueue(chunk);
-      const text = new TextDecoder().decode(chunk);
-      const extractor = protocol === "openai" ? extractTokenUsageOpenAI : extractTokenUsageAnthropic;
-      const tokenData = extractor(text);
-      if (tokenData) {
-        onTokens(tokenData);
+      if (protocolConverter) {
+        const text = decoder.decode(chunk, { stream: true });
+        // SSE chunks are separated by double newlines
+        const rawEvents = text.split(/\n\n/);
+        const convertedParts: string[] = [];
+
+        for (const rawEvent of rawEvents) {
+          if (!rawEvent.trim()) continue;
+          const converted = protocolConverter(rawEvent);
+          if (converted) {
+            convertedParts.push(converted);
+          } else {
+            // Passthrough unconverted events
+            convertedParts.push(rawEvent + "\n\n");
+          }
+        }
+
+        if (convertedParts.length > 0) {
+          controller.enqueue(new TextEncoder().encode(convertedParts.join("")));
+        }
+
+        // Token extraction from original text
+        const extractor = protocol === "openai" ? extractTokenUsageOpenAI : extractTokenUsageAnthropic;
+        const tokenData = extractor(text);
+        if (tokenData) {
+          onTokens(tokenData);
+        }
+      } else {
+        controller.enqueue(chunk);
+        const text = decoder.decode(chunk, { stream: true });
+        const extractor = protocol === "openai" ? extractTokenUsageOpenAI : extractTokenUsageAnthropic;
+        const tokenData = extractor(text);
+        if (tokenData) {
+          onTokens(tokenData);
+        }
       }
     },
   });

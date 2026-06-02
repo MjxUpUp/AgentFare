@@ -1,4 +1,4 @@
-import type { ModelRegistry, ModelEntry, ModelTier } from "@agentdispatch/models";
+import type { ModelRegistry, ModelEntry, ModelTier } from "@agentfare/models";
 import type { EnterpriseProviderConfig, RoutingConfig } from "../config/types.js";
 
 export function tryCrossProviderEnterprise(

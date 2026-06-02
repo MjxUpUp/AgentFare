@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { installFetchPatch } from "@agentdispatch/hook/fetch-patch";
-import { DEFAULT_CONFIG } from "@agentdispatch/core";
-import { ModelRegistry } from "@agentdispatch/models";
-import type { RequestHandler, HandleResult } from "@agentdispatch/hook/request-handler";
+import { installFetchPatch } from "@agentfare/hook/fetch-patch";
+import { DEFAULT_CONFIG } from "@agentfare/core";
+import { ModelRegistry } from "@agentfare/models";
+import type { RequestHandler, HandleResult } from "@agentfare/hook/request-handler";
 
 /**
  * E2E: Cross-provider routing integration tests.

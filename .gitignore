@@ -3,5 +3,6 @@ dist/
 *.tsbuildinfo
 .turbo/
 coverage/
-agentdispatch-data/
+agentfare-data/
 *.db
+docs/

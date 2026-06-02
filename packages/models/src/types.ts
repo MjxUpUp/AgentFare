@@ -1,7 +1,7 @@
 export interface ModelPricing {
   inputPerMillion: number;     // $/MTok
   outputPerMillion: number;
-  cacheHitPerMillion: number;  // -1 = 不支持缓存
+  cacheHitPerMillion: number | null;  // null = 不支持缓存
   currency: "USD";
 }
 
@@ -32,7 +32,7 @@ export interface ModelApi {
 
 export interface ModelEntry {
   id: string;                    // "openai/gpt-5.3-codex-spark"
-  provider: string;              // openai / anthropic / deepseek / ...
+  provider: ProviderId;          // openai / anthropic / deepseek / ...
   displayName: string;
   tier: ModelTier;
 

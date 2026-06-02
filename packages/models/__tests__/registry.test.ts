@@ -31,7 +31,7 @@ describe("ModelRegistry", () => {
   it("should find cheapest model for a provider and tier", () => {
     const cheapest = registry.findCheapest("openai", "fast");
     expect(cheapest).toBeDefined();
-    expect(cheapest!.id).toBe("openai/gpt-5.4-mini");
+    expect(cheapest!.id).toBe("openai/gpt-5.3-codex-spark");
   });
 
   it("should detect provider from URL", () => {

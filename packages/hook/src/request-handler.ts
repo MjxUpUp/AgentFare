@@ -1,6 +1,8 @@
-import type { ModelRegistry } from "@agentdispatch/models";
-import type { AgentDispatchConfig, StepAnalysis, RoutingDecision, Message } from "@agentdispatch/core";
-import { analyzeStepRules, Router } from "@agentdispatch/core";
+import type { ModelRegistry, ModelEntry } from "@agentfare/models";
+import { getApiKeyForProvider } from "@agentfare/models";
+import type { AgentFareConfig, StepAnalysis, RoutingDecision, Message } from "@agentfare/core";
+import { analyzeStepRules, Router, RouteCache, analyzeWithLLM, selectAnalyzerModel } from "@agentfare/core";
+import { estimateTokensFromMessages } from "@agentfare/core";
 
 export interface HandleResult {
   decision: RoutingDecision;
@@ -9,15 +11,25 @@ export interface HandleResult {
   sessionId: string;
 }
 
+// ISSUE-014: typed interfaces for L2/L3 injection
+interface RouteCacheLike {
+  get(key: string): StepAnalysis | null;
+  set(key: string, analysis: StepAnalysis): void;
+}
+
+type LLMAnalyzerFn = (messages: Message[], fetchFn: typeof globalThis.fetch, url: string, modelId: string, apiKey: string) => Promise<StepAnalysis | null>;
+
+type SelectAnalyzerModelFn = (registry: ModelRegistry) => ModelEntry | null;
+
 export class RequestHandler {
   private router: Router;
-  private cache: any | null = null;
-  private llmAnalyzer: any | null = null;
-  private selectAnalyzerModelFn: any | null = null;
+  private cache: RouteCacheLike | null = null;
+  private llmAnalyzer: LLMAnalyzerFn | null = null;
+  private selectAnalyzerModelFn: SelectAnalyzerModelFn | null = null;
   private getOriginalFetchFn: (() => typeof globalThis.fetch) | null = null;
 
   constructor(
-    private config: AgentDispatchConfig,
+    private config: AgentFareConfig,
     private registry: ModelRegistry,
   ) {
     this.router = new Router(config, registry);
@@ -25,9 +37,9 @@ export class RequestHandler {
 
   /** Task 12-13 call this to inject L2/L3 capabilities */
   injectL2L3(deps: {
-    cache: any;
-    analyzeWithLLM: any;
-    selectAnalyzerModel: any;
+    cache: RouteCacheLike;
+    analyzeWithLLM: LLMAnalyzerFn;
+    selectAnalyzerModel: SelectAnalyzerModelFn;
     getOriginalFetch: () => typeof globalThis.fetch;
   }): void {
     this.cache = deps.cache;
@@ -57,7 +69,7 @@ export class RequestHandler {
 
     // L3 cache (injected via injectL2L3)
     if (!analysis && this.cache && this.config.routing.cacheResults) {
-      const cacheKey = (this.cache.constructor as any).makeKey(taskText);
+      const cacheKey = RouteCache.makeKey(taskText);
       const cached = this.cache.get(cacheKey);
       if (cached) {
         analysis = cached;
@@ -88,12 +100,8 @@ export class RequestHandler {
 
     // L3 conservative fallback
     if (!analysis) {
-      let totalChars = 0;
-      for (const m of messages) {
-        if (typeof m.content === "string") totalChars += m.content.length;
-        else if (Array.isArray(m.content)) totalChars += m.content.filter((b: any) => b.type === "text").reduce((s: number, b: any) => s + (b.text?.length ?? 0), 0);
-      }
-      const inputTokens = Math.ceil(totalChars / 4);
+      // ISSUE-027: use shared estimateTokensFromMessages (via import from @agentfare/core)
+      const fallbackTokens = estimateTokensFromMessages(messages);
       analysis = {
         stepType: "unknown",
         difficulty: 0.5,
@@ -102,7 +110,7 @@ export class RequestHandler {
         recommendedModel: "",
         reasoning: "L1 未匹配，L2 不可用或低置信度，保守使用 standard tier",
         needsProviderSwitch: false,
-        estimatedTokens: { input: inputTokens, output: Math.ceil(inputTokens * 0.3) },
+        estimatedTokens: fallbackTokens,
         alternatives: [
           { model: "", tier: "fast", costSavingsVsRecommended: 0.6, qualityRisk: "high" },
           { model: "", tier: "powerful", costSavingsVsRecommended: -1.5, qualityRisk: "none" },
@@ -123,7 +131,7 @@ export class RequestHandler {
 
     // Cache write (injected via injectL2L3)
     if (this.cache && this.config.routing.cacheResults && analysis.confidence > 0.7) {
-      const cacheKey = (this.cache.constructor as any).makeKey(taskText, analysis.stepType);
+      const cacheKey = RouteCache.makeKey(taskText, analysis.stepType);
       this.cache.set(cacheKey, analysis);
     }
 
@@ -160,18 +168,7 @@ function generateSessionId(): string {
   return `ad-${Date.now()}-${++sessionCounter}`;
 }
 
-const ENV_KEY_MAP: Record<string, string> = {
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  deepseek: "DEEPSEEK_API_KEY",
-  google: "GOOGLE_API_KEY",
-  zhipu: "ZHIPU_API_KEY",
-  moonshot: "MOONSHOT_API_KEY",
-  alibaba: "ALIBABA_API_KEY",
-  xiaomi: "XIAOMI_API_KEY",
-};
-
+// ISSUE-015: use shared ENV_KEY_MAP from @agentfare/models
 function getEnvKeyForProvider(provider: string): string | undefined {
-  const envKey = ENV_KEY_MAP[provider];
-  return envKey ? process.env[envKey] : undefined;
+  return getApiKeyForProvider(provider);
 }

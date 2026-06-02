@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-const CACHE_FILE = path.join(os.homedir(), ".agentdispatch", "cache", "route-cache.json");
+const CACHE_FILE = path.join(os.homedir(), ".agentfare", "cache", "route-cache.json");
 
 export class RouteCache {
   private cache: Map<string, { analysis: StepAnalysis; timestamp: number }> = new Map();
@@ -13,6 +13,8 @@ export class RouteCache {
 
   constructor(private maxSize: number = 1000) {
     this.loadFromDisk();
+    // ISSUE-039: persist cache on process exit
+    process.on("exit", () => this.saveToDisk());
   }
 
   static makeKey(task: string, stepType?: string): string {

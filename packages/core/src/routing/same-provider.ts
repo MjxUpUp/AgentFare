@@ -1,5 +1,5 @@
-import type { ModelEntry, ModelTier } from "@agentdispatch/models";
-import type { ModelRegistry } from "@agentdispatch/models";
+import type { ModelEntry, ModelTier } from "@agentfare/models";
+import type { ModelRegistry } from "@agentfare/models";
 
 export function findSameProviderModel(
   registry: ModelRegistry,

@@ -1,11 +1,3 @@
-const DISPATCH_INTERNAL_HEADER = "x-agentdispatch-internal";
-
-export function isInternalRequest(init: RequestInit | undefined): boolean {
-  if (!init?.headers) return false;
-  const headers = init.headers as Record<string, string>;
-  return headers[DISPATCH_INTERNAL_HEADER] === "true";
-}
-
-export function makeInternalHeaders(existing?: Record<string, string>): Record<string, string> {
-  return { ...existing, [DISPATCH_INTERNAL_HEADER]: "true" };
-}
+// ISSUE-064: re-export from headers.ts (single implementation)
+// Kept as a re-export shim for backward compatibility with existing imports.
+export { isInternalRequest, makeInternalHeaders } from "./headers.js";
