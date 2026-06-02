@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/proxy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "HTTP proxy server with provider routing and SSE streaming for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",
@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/agentfare/agentfare.git",
+    "url": "https://github.com/MjxUpUp/AgentFare.git",
     "directory": "packages/proxy"
   },
   "exports": {

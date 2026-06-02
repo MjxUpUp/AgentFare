@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/loader",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Module loader for injecting AgentFare hooks at runtime",
   "license": "MIT",
   "main": "dist/index.js",
@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/agentfare/agentfare.git",
+    "url": "https://github.com/MjxUpUp/AgentFare.git",
     "directory": "packages/loader"
   },
   "scripts": {

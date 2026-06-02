@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/setup",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Auto-detection and setup tooling for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",
@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/agentfare/agentfare.git",
+    "url": "https://github.com/MjxUpUp/AgentFare.git",
     "directory": "packages/setup"
   },
   "scripts": {
