@@ -38,12 +38,17 @@ export function ensureLoaderScript(): string {
 
   if (!fs.existsSync(LOADER_FILE)) {
     // Generate fresh loader.js with absolute path
+    // ISSUE-067a: call setup() explicitly instead of relying on top-level side effects
+    // ISSUE-020: use createRequire for ESM compatibility
     const content = `// AgentFare Loader — editable
 // Add other hook requires to this array:
 const hooks = [
   require(${hookRequirePath}),
 ];
-hooks.forEach(h => { if (typeof h === 'function') h(); });
+hooks.forEach(mod => {
+  if (mod && typeof mod.setup === 'function') mod.setup();
+  else if (typeof mod === 'function') mod();
+});
 `;
     fs.writeFileSync(LOADER_FILE, content);
   } else {

@@ -46,7 +46,7 @@ export { RouteCache } from "./analyzer/cache.js";
 export { selectAnalyzerModel } from "./analyzer/auto-model-selector.js";
 
 // === Task 20: Optimizer eval runner ===
-export { parsePipelineYAML, computeTotalCombinations } from "./optimizer/pipeline-parser.js";
+export { parsePipeline, parsePipelineYAML, computeTotalCombinations } from "./optimizer/pipeline-parser.js";
 export { loadEvalDataset, evaluateCombo } from "./optimizer/eval-runner.js";
 export type { EvalSample, EvalResult } from "./optimizer/eval-runner.js";
 

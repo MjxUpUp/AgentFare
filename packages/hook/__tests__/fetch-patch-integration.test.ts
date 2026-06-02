@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { installFetchPatch } from "../src/fetch-patch.js";
 import type { RequestHandler, HandleResult } from "../src/request-handler.js";
+import { LLMDetector } from "../src/url-detector.js";
+import { ModelRegistry } from "@agentfare/models";
+
+function makeDetector(): LLMDetector {
+  return new LLMDetector(new ModelRegistry());
+}
 
 describe("installFetchPatch — integration", () => {
   let originalFetch: typeof globalThis.fetch;
@@ -34,6 +40,7 @@ describe("installFetchPatch — integration", () => {
 
     uninstall = installFetchPatch({
       handler: mockHandler,
+      detector: makeDetector(),
       onError: (err) => capturedErrors.push(err),
     });
 
@@ -64,7 +71,7 @@ describe("installFetchPatch — integration", () => {
       handle: async () => { handlerCalled = true; return null; },
     } as any;
 
-    uninstall = installFetchPatch({ handler: mockHandler });
+    uninstall = installFetchPatch({ handler: mockHandler, detector: makeDetector() });
 
     await globalThis.fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -89,7 +96,7 @@ describe("installFetchPatch — integration", () => {
       handle: async () => { handlerCalled = true; return null; },
     } as any;
 
-    uninstall = installFetchPatch({ handler: mockHandler });
+    uninstall = installFetchPatch({ handler: mockHandler, detector: makeDetector() });
 
     await globalThis.fetch("https://example.com/api/data", {
       method: "GET",
@@ -124,6 +131,7 @@ describe("installFetchPatch — integration", () => {
     const captured: HandleResult[] = [];
     uninstall = installFetchPatch({
       handler: mockHandler,
+      detector: makeDetector(),
       onRouting: (r) => captured.push(r),
     });
 
@@ -157,7 +165,7 @@ describe("installFetchPatch — integration", () => {
       handle: async () => { handlerCalled = true; return null; },
     } as any;
 
-    uninstall = installFetchPatch({ handler: mockHandler });
+    uninstall = installFetchPatch({ handler: mockHandler, detector: makeDetector() });
 
     // Simulate body as a non-string (e.g., ReadableStream or undefined)
     const response = await globalThis.fetch("https://api.openai.com/v1/chat/completions", {

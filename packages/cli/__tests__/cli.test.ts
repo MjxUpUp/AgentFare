@@ -9,7 +9,7 @@ import { optimizeCommand } from "../src/commands/optimize.js";
 describe("CLI entry", () => {
   it("should create a commander program", () => {
     const program = new Command();
-    program.name("agentfare").version("0.1.0");
+    program.name("agentfare").version(JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "../package.json"), "utf-8")).version);
     expect(program.name()).toBe("agentfare");
   });
 });
@@ -23,7 +23,7 @@ describe("CLI subcommand registration", () => {
     const program = new Command();
     program
       .name("agentfare")
-      .version("0.1.0")
+      .version(JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "../package.json"), "utf-8")).version)
       .exitOverride();
 
     program.addCommand(initCommand);
@@ -103,7 +103,7 @@ describe("unknown command handling (ISSUE-051)", () => {
     const program = new Command();
     program
       .name("agentfare")
-      .version("0.1.0")
+      .version(JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "../package.json"), "utf-8")).version)
       .exitOverride(); // makes parseAsync throw instead of process.exit
 
     program.addCommand(initCommand);
@@ -121,7 +121,7 @@ describe("unknown command handling (ISSUE-051)", () => {
     const program = new Command();
     program
       .name("agentfare")
-      .version("0.1.0")
+      .version(JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "../package.json"), "utf-8")).version)
       .exitOverride();
 
     program.addCommand(initCommand);
@@ -166,7 +166,7 @@ describe("--help and --version exit handling", () => {
     const program = new Command();
     program
       .name("agentfare")
-      .version("0.1.0")
+      .version(JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "../package.json"), "utf-8")).version)
       .exitOverride();
     program.addCommand(initCommand);
     program.addCommand(costCommand);

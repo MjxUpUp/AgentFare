@@ -1,13 +1,24 @@
 // @agentfare/hook — Entry point
-// Initializes config, registry, handler, tracker, quality signal collector, and installs fetch patch
+// ISSUE-067a: no top-level side effects. Callers (loader.js) must invoke setup() explicitly.
 
 import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollector } from "@agentfare/core";
 import { ModelRegistry } from "@agentfare/models";
 import { RequestHandler } from "./request-handler.js";
 import { installFetchPatch } from "./fetch-patch.js";
+import { LLMDetector } from "./url-detector.js";
 import { getDbPath, getErrorLogPath } from "@agentfare/models";
 
-function initializeHook(): void {
+let initialized = false;
+
+/**
+ * Initialize the AgentFare hook: load config, open DB, install fetch patch.
+ * Must be called explicitly — the module no longer auto-initializes on import.
+ * Safe to call multiple times; subsequent calls are no-ops.
+ */
+export function setup(): void {
+  if (initialized) return;
+  initialized = true;
+
   try {
     const config = loadConfigFromDisk();
     const registry = new ModelRegistry(config.customModels as any);
@@ -25,6 +36,7 @@ function initializeHook(): void {
 
     installFetchPatch({
       handler,
+      detector: new LLMDetector(registry),
       costTracker,
       qualitySignalCollector,
       onRouting: () => {},
@@ -40,5 +52,3 @@ function initializeHook(): void {
     console.warn("[AgentFare] Hook 初始化失败，已跳过（不影响宿主进程）");
   }
 }
-
-initializeHook();

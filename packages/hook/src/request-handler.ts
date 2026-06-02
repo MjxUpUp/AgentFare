@@ -52,7 +52,10 @@ export class RequestHandler {
     url: string,
     bodyStr: string,
     headers: Record<string, string>,
+    signal?: AbortSignal,
   ): Promise<HandleResult | null> {
+    // ISSUE-013: early exit if already aborted (timeout won the race)
+    if (signal?.aborted) return null;
     const body = JSON.parse(bodyStr);
     const messages: Message[] = body.messages ?? [];
     const originalModel = body.model;
@@ -78,6 +81,7 @@ export class RequestHandler {
 
     // L2 LLM analysis (injected via injectL2L3)
     if (!analysis && this.llmAnalyzer && this.selectAnalyzerModelFn && this.getOriginalFetchFn) {
+      if (signal?.aborted) return null;
       if (this.config.routing.analyzerModel !== "off") {
         const analyzerModel = this.selectAnalyzerModelFn(this.registry);
         if (analyzerModel) {
@@ -116,6 +120,17 @@ export class RequestHandler {
           { model: "", tier: "powerful", costSavingsVsRecommended: -1.5, qualityRisk: "none" },
         ],
       };
+    }
+
+    // ISSUE-029: fill recommendedModel from registry so cross-provider routing can use it
+    if (!analysis.recommendedModel) {
+      const provider = this.registry.detectProvider(url);
+      if (provider) {
+        const candidates = this.registry.getByProvider(provider).filter(m => m.tier === analysis.recommendedTier);
+        if (candidates.length > 0) {
+          analysis.recommendedModel = candidates[0].id;
+        }
+      }
     }
 
     const decision = this.router.decide(url, analysis);

@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { installFetchPatch } from "../src/fetch-patch.js";
 import type { RequestHandler, HandleResult } from "../src/request-handler.js";
+import { LLMDetector } from "../src/url-detector.js";
+import { ModelRegistry } from "@agentfare/models";
+
+function makeDetector(): LLMDetector {
+  return new LLMDetector(new ModelRegistry());
+}
 
 describe("installFetchPatch", () => {
   let originalFetch: typeof globalThis.fetch;
@@ -37,6 +43,7 @@ describe("installFetchPatch", () => {
 
     uninstall = installFetchPatch({
       handler: mockHandler,
+      detector: makeDetector(),
       onRouting: (r) => routingResults.push(r),
     });
 
@@ -54,7 +61,7 @@ describe("installFetchPatch", () => {
     globalThis.fetch = async () => { called = true; return new Response("ok"); };
 
     const mockHandler: RequestHandler = { handle: async () => null } as any;
-    uninstall = installFetchPatch({ handler: mockHandler });
+    uninstall = installFetchPatch({ handler: mockHandler, detector: makeDetector() });
 
     await globalThis.fetch("https://api.github.com/repos");
 
@@ -67,7 +74,7 @@ describe("installFetchPatch", () => {
 
     const mockHandler: RequestHandler = { handle: async () => { throw new Error("boom"); } } as any;
     const errors: unknown[] = [];
-    uninstall = installFetchPatch({ handler: mockHandler, onError: (e) => errors.push(e) });
+    uninstall = installFetchPatch({ handler: mockHandler, detector: makeDetector(), onError: (e) => errors.push(e) });
 
     await globalThis.fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",

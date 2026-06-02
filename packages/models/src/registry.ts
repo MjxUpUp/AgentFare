@@ -1,17 +1,6 @@
 import type { ModelEntry, ModelTier } from "./types.js";
 import { BUILTIN_MODELS } from "./builtin-models.js";
 
-const URL_PROVIDER_PATTERNS: Array<{ pattern: RegExp; provider: string }> = [
-  { pattern: /api\.openai\.com/, provider: "openai" },
-  { pattern: /api\.anthropic\.com/, provider: "anthropic" },
-  { pattern: /generativelanguage\.googleapis/, provider: "google" },
-  { pattern: /api\.deepseek\.com/, provider: "deepseek" },
-  { pattern: /open\.bigmodel\.cn/, provider: "zhipu" },
-  { pattern: /api\.moonshot\.cn/, provider: "moonshot" },
-  { pattern: /dashscope\.aliyuncs/, provider: "alibaba" },
-  { pattern: /platform\.xiaomimimo\.com/, provider: "xiaomi" },
-];
-
 export class ModelRegistry {
   private models: Map<string, ModelEntry> = new Map();
 
@@ -48,10 +37,22 @@ export class ModelRegistry {
     );
   }
 
+  /**
+   * Detect the provider from a URL by matching its host against all registered
+   * models' api.baseUrl hosts. No hardcoded patterns — any provider added to the
+   * registry (builtin or custom) is automatically recognized.
+   */
   detectProvider(url: string): string | null {
-    for (const { pattern, provider } of URL_PROVIDER_PATTERNS) {
-      if (pattern.test(url)) return provider;
-    }
+    try {
+      const host = new URL(url).host;
+      for (const model of this.models.values()) {
+        try {
+          if (new URL(model.api.baseUrl).host === host) {
+            return model.provider;
+          }
+        } catch {}
+      }
+    } catch {}
     return null;
   }
 

@@ -1,4 +1,4 @@
-import { isLLMApiCall } from "./url-detector.js";
+import { LLMDetector } from "./url-detector.js";
 import { isInternalRequest, extractHeaders } from "./headers.js";
 import type { RequestHandler, HandleResult } from "./request-handler.js";
 import { createStreamingResponseWrapper } from "./response-handler.js";
@@ -16,6 +16,7 @@ const ANALYZER_TIMEOUT_MS = 500;
 
 export interface FetchPatchOptions {
   handler: RequestHandler;
+  detector: LLMDetector;
   costTracker?: CostTracker;
   qualitySignalCollector?: QualitySignalCollector;
   onlineLearner?: any;
@@ -48,7 +49,7 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
   ): Promise<Response> {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
-    if (!isLLMApiCall(url)) {
+    if (!options.detector.isLLMApiCall(url)) {
       return originalFetch.call(this, input, init);
     }
 
@@ -71,10 +72,20 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
         }
       }
 
+      // ISSUE-013: use AbortController to cancel handler on timeout
+      const abortCtrl = new AbortController();
+      let handlerError: unknown;
       const result = await Promise.race([
-        options.handler.handle(url, bodyStr, headers),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), ANALYZER_TIMEOUT_MS)),
+        options.handler.handle(url, bodyStr, headers, abortCtrl.signal).catch((err) => {
+          handlerError = err;
+          return null;
+        }),
+        new Promise<null>((resolve) => {
+          setTimeout(() => { abortCtrl.abort(); resolve(null); }, ANALYZER_TIMEOUT_MS);
+        }),
       ]) as HandleResult | null;
+
+      if (handlerError) throw handlerError;
 
       if (!result || !result.decision.targetModel) {
         return originalFetch.call(this, input, init);
@@ -165,7 +176,11 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
       options.onRouting?.({ ...result, decision: safeDecision } as HandleResult);
 
       // ISSUE-028: Protocol conversion — convert response when crossing providers
-      const protocol = targetModel.api.protocol;
+      // When same-provider routing (URL not rewritten), infer protocol from original URL
+      // because the response format matches the original endpoint, not the target model's registered protocol
+      const protocol = result.decision.providerSwitched
+        ? targetModel.api.protocol
+        : detectProtocolFromUrl(url);
 
       // Streaming response: wrap with optional SSE protocol converter
       if (response.body && isStreamingResponse(response)) {
@@ -244,6 +259,13 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
 function isStreamingResponse(response: Response): boolean {
   const ct = response.headers.get("content-type") ?? "";
   return ct.includes("text/event-stream");
+}
+
+function detectProtocolFromUrl(url: string): "openai" | "anthropic" {
+  if (url.includes("anthropic.com") || url.includes("/api/anthropic/")) {
+    return "anthropic";
+  }
+  return "openai";
 }
 
 export function getOriginalFetch(): typeof globalThis.fetch {
