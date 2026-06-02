@@ -1,8 +1,21 @@
 {
-  "name": "@agentdispatch/setup",
-  "version": "0.1.0",
+  "name": "@agentfare/setup",
+  "version": "0.1.5",
+  "description": "Auto-detection and setup tooling for AgentFare",
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentfare/agentfare.git",
+    "directory": "packages/setup"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",

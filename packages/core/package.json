@@ -1,15 +1,30 @@
 {
-  "name": "@agentdispatch/core",
-  "version": "0.1.0",
+  "name": "@agentfare/core",
+  "version": "0.1.2",
+  "description": "Core routing engine, cost tracker, and optimizer for AgentFare",
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentfare/agentfare.git",
+    "directory": "packages/core"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentdispatch/models": "workspace:*",
+    "@agentfare/models": "workspace:*"
+  },
+  "optionalDependencies": {
     "better-sqlite3": "^11.0.0"
   },
   "devDependencies": {

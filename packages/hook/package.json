@@ -1,21 +1,34 @@
 {
-  "name": "@agentdispatch/hook",
-  "version": "0.1.0",
+  "name": "@agentfare/hook",
+  "version": "0.1.2",
+  "description": "Fetch interception hooks with protocol conversion for AgentFare",
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentfare/agentfare.git",
+    "directory": "packages/hook"
+  },
   "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.js"
-    },
-    "./fetch-patch": {
-      "import": "./dist/fetch-patch.js",
-      "require": "./dist/fetch-patch.js"
-    },
-    "./request-handler": {
-      "import": "./dist/request-handler.js",
-      "require": "./dist/request-handler.js"
-    }
+    ".": "./dist/index.js",
+    "./fetch-patch": "./dist/fetch-patch.js",
+    "./request-handler": "./dist/request-handler.js",
+    "./response-handler": "./dist/response-handler.js",
+    "./headers": "./dist/headers.js",
+    "./reentry-guard": "./dist/reentry-guard.js",
+    "./protocol/openai-to-anthropic": "./dist/protocol/openai-to-anthropic.js",
+    "./protocol/anthropic-to-openai-request": "./dist/protocol/anthropic-to-openai-request.js",
+    "./protocol/anthropic-to-openai": "./dist/protocol/anthropic-to-openai.js",
+    "./protocol/openai-to-anthropic-response": "./dist/protocol/openai-to-anthropic-response.js",
+    "./protocol/openai-to-anthropic-sse": "./dist/protocol/openai-to-anthropic-sse.js",
+    "./protocol/sse-transform": "./dist/protocol/sse-transform.js"
   },
   "scripts": {
     "build": "tsc",
@@ -23,8 +36,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentdispatch/core": "workspace:*",
-    "@agentdispatch/models": "workspace:*"
+    "@agentfare/core": "workspace:*",
+    "@agentfare/models": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

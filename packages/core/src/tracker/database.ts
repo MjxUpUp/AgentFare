@@ -1,6 +1,14 @@
-import Database from "better-sqlite3";
 import * as path from "node:path";
 import * as fs from "node:fs";
+
+let Database: typeof import("better-sqlite3") | undefined;
+try {
+  Database = require("better-sqlite3");
+} catch {
+  // better-sqlite3 is an optional native dependency.
+  // It requires a C++ toolchain to compile; without it, TrackingDatabase will
+  // throw a clear error at construction time rather than failing at install.
+}
 
 export interface RoutingLogEntry {
   sessionId: string;
@@ -24,6 +32,39 @@ export interface CostSummary {
   totalOriginalCost: number;
   totalActualCost: number;
   totalSavings: number;
+}
+
+// ISSUE-042: Strongly typed query result
+export interface RoutingLogRow {
+  id: number;
+  timestamp: string;
+  session_id: string;
+  tool: string;
+  step_type: string;
+  original_model: string;
+  routed_model: string;
+  difficulty: number | null;
+  confidence: number | null;
+  reasoning: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  original_cost: number;
+  actual_cost: number;
+  savings: number;
+  quality_signal: string | null;
+}
+
+// ISSUE-036: SQL-level aggregation result
+export interface StepToolSummary {
+  key: string;
+  count: number;
+  totalCost: number;
+  totalSavings: number;
+}
+
+/** Check whether better-sqlite3 is available in the current environment. */
+export function isSqliteAvailable(): boolean {
+  return Database !== undefined;
 }
 
 const SCHEMA = `
@@ -69,9 +110,15 @@ CREATE TABLE IF NOT EXISTS pipeline_combos (
 `;
 
 export class TrackingDatabase {
-  private db: Database.Database;
+  private db: InstanceType<NonNullable<typeof Database>>;
 
   constructor(dbPath: string) {
+    if (!Database) {
+      throw new Error(
+        "better-sqlite3 is not available. " +
+        "Please install it (requires a C++ build toolchain) or use a storage backend that does not depend on SQLite."
+      );
+    }
     const dir = path.dirname(dbPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     this.db = new Database(dbPath);
@@ -120,7 +167,7 @@ export class TrackingDatabase {
     sessionId?: string;
     tool?: string;
     stepType?: string;
-  }): any[] {
+  }): RoutingLogRow[] {
     const conditions: string[] = [];
     const params: any[] = [];
     if (filter.sessionId) {
@@ -141,26 +188,61 @@ export class TrackingDatabase {
       .prepare(
         `SELECT * FROM routing_logs ${where} ORDER BY timestamp DESC`
       )
-      .all(...params);
+      .all(...params) as RoutingLogRow[];
+  }
+
+  // ISSUE-036: SQL-level aggregation to avoid loading all rows into memory
+  getStepSummary(timeRange?: string): StepToolSummary[] {
+    return this.aggregateBy("step_type", timeRange);
+  }
+
+  getToolSummary(timeRange?: string): StepToolSummary[] {
+    return this.aggregateBy("tool", timeRange);
+  }
+
+  // ISSUE-062: whitelist allowed aggregation columns to prevent SQL injection
+  private static readonly ALLOWED_AGG_COLUMNS = ["step_type", "tool"] as const;
+
+  private aggregateBy(column: string, timeRange?: string): StepToolSummary[] {
+    if (!(TrackingDatabase.ALLOWED_AGG_COLUMNS as readonly string[]).includes(column)) {
+      throw new Error(`Invalid aggregation column: ${column}`);
+    }
+    const timeCondition = timeRange
+      ? `WHERE timestamp >= datetime('now', ?)`
+      : "";
+    const stmt = timeRange
+      ? this.db.prepare(
+          `SELECT ${column} as key, COUNT(*) as count, COALESCE(SUM(actual_cost), 0) as totalCost, COALESCE(SUM(savings), 0) as totalSavings FROM routing_logs ${timeCondition} GROUP BY ${column} ORDER BY totalCost DESC`
+        )
+      : this.db.prepare(
+          `SELECT ${column} as key, COUNT(*) as count, COALESCE(SUM(actual_cost), 0) as totalCost, COALESCE(SUM(savings), 0) as totalSavings FROM routing_logs GROUP BY ${column} ORDER BY totalCost DESC`
+        );
+    const params = timeRange ? [`-${parseTimeRange(timeRange)}`] : [];
+    return stmt.all(...params) as StepToolSummary[];
   }
 
   getCostSummary(timeRange?: string): CostSummary {
-    const whereClause = timeRange
-      ? `WHERE timestamp >= datetime('now', '-${parseTimeRange(timeRange)}')`
-      : "";
-    const row = this.db
-      .prepare(
-        `
-      SELECT
-        COUNT(*) as totalRequests,
-        COALESCE(SUM(original_cost), 0) as totalOriginalCost,
-        COALESCE(SUM(actual_cost), 0) as totalActualCost,
-        COALESCE(SUM(savings), 0) as totalSavings
-      FROM routing_logs
-      ${whereClause}
-    `
-      )
-      .get() as any;
+    // ISSUE-008: use parameterized query instead of string interpolation
+    const stmt = timeRange
+      ? this.db.prepare(
+          `SELECT
+            COUNT(*) as totalRequests,
+            COALESCE(SUM(original_cost), 0) as totalOriginalCost,
+            COALESCE(SUM(actual_cost), 0) as totalActualCost,
+            COALESCE(SUM(savings), 0) as totalSavings
+           FROM routing_logs
+           WHERE timestamp >= datetime('now', ?)`
+        )
+      : this.db.prepare(
+          `SELECT
+            COUNT(*) as totalRequests,
+            COALESCE(SUM(original_cost), 0) as totalOriginalCost,
+            COALESCE(SUM(actual_cost), 0) as totalActualCost,
+            COALESCE(SUM(savings), 0) as totalSavings
+           FROM routing_logs`
+        );
+    const params = timeRange ? [`-${parseTimeRange(timeRange)}`] : [];
+    const row = stmt.get(...params) as any;
     return {
       totalRequests: row.totalRequests,
       totalOriginalCost: row.totalOriginalCost,
@@ -176,16 +258,10 @@ export class TrackingDatabase {
 
 function parseTimeRange(range: string): string {
   const match = range.match(/^(\d+)([dhm])$/);
-  if (!match) return "30 days";
+  if (!match) throw new Error(`Invalid timeRange: "${range}". Expected format: <number><d|h|m> (e.g. "7d", "24h", "30m")`);
   const [, num, unit] = match;
-  switch (unit) {
-    case "d":
-      return `${num} days`;
-    case "h":
-      return `${num} hours`;
-    case "m":
-      return `${num} minutes`;
-    default:
-      return "30 days";
-  }
+  // regex guarantees unit is one of d/h/m
+  if (unit === "d") return `${num} days`;
+  if (unit === "h") return `${num} hours`;
+  return `${num} minutes`;
 }

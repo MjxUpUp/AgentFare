@@ -1,4 +1,4 @@
-// @agentdispatch/core — 统一导出
+// @agentfare/core — 统一导出
 // 每完成一个 Task，在此文件末尾追加对应导出
 
 // === Task 4: 配置系统 ===
@@ -6,7 +6,7 @@ export { mergeConfig, loadConfigFromDisk } from "./config/loader.js";
 export { applyEnterprisePolicy } from "./config/enterprise.js";
 export { DEFAULT_CONFIG } from "./config/defaults.js";
 export type {
-  AgentDispatchConfig,
+  AgentFareConfig,
   RoutingConfig,
   CrossProviderMode,
   EnterpriseProviderConfig,
@@ -28,11 +28,11 @@ export type {
 } from "./analyzer/types.js";
 
 // === Task 6: Cost Tracker + SQLite ===
-export { TrackingDatabase } from "./tracker/database.js";
+export { TrackingDatabase, isSqliteAvailable } from "./tracker/database.js";
 export { CostTracker } from "./tracker/cost-tracker.js";
 export { QualitySignalCollector } from "./tracker/quality-signal.js";
 export type { QualitySignal, QualitySignalEvent } from "./tracker/quality-signal.js";
-export type { RoutingLogEntry, CostSummary } from "./tracker/database.js";
+export type { RoutingLogEntry, CostSummary, RoutingLogRow, StepToolSummary } from "./tracker/database.js";
 
 // === Task 7: Routing Engine ===
 export { Router } from "./routing/router.js";
@@ -62,3 +62,6 @@ export type { ModelScore, OnlineLearnerConfig } from "./optimizer/online-learnin
 // === Task 23: Report Exporter ===
 export { generateReport } from "./tracker/report-exporter.js";
 export type { CostReport, StepReport, ToolReport } from "./tracker/report-exporter.js";
+
+// === Shared utilities ===
+export { estimateTokensFromMessages } from "./utils/tokens.js";

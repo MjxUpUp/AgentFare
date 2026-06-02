@@ -1,16 +1,29 @@
 {
-  "name": "@agentdispatch/mcp-server",
-  "version": "0.1.0",
+  "name": "@agentfare/mcp-server",
+  "version": "0.1.2",
+  "description": "MCP (Model Context Protocol) server for AgentFare cost queries",
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentfare/agentfare.git",
+    "directory": "packages/mcp-server"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentdispatch/core": "workspace:*",
-    "@agentdispatch/models": "workspace:*",
+    "@agentfare/core": "workspace:*",
+    "@agentfare/models": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^4.4.3"
   },

@@ -1,8 +1,21 @@
 {
-  "name": "@agentdispatch/models",
-  "version": "0.1.0",
+  "name": "@agentfare/models",
+  "version": "0.1.2",
+  "description": "Model registry and pricing data for AgentFare",
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentfare/agentfare.git",
+    "directory": "packages/models"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",

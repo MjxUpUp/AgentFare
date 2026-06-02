@@ -1,15 +1,28 @@
 {
-  "name": "@agentdispatch/loader",
-  "version": "0.1.0",
+  "name": "@agentfare/loader",
+  "version": "0.1.4",
+  "description": "Module loader for injecting AgentFare hooks at runtime",
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentfare/agentfare.git",
+    "directory": "packages/loader"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentdispatch/hook": "workspace:*"
+    "@agentfare/hook": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
