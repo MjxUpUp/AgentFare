@@ -36,11 +36,8 @@ export function ensureLoaderScript(): string {
   }
   const hookRequirePath = JSON.stringify(hookPath);
 
-  if (!fs.existsSync(LOADER_FILE)) {
-    // Generate fresh loader.js with absolute path
-    // ISSUE-067a: call setup() explicitly instead of relying on top-level side effects
-    // ISSUE-020: use createRequire for ESM compatibility
-    const content = `// AgentFare Loader — editable
+  // Template for the loader script (versioned so stale formats auto-upgrade)
+  const LOADER_TEMPLATE = `// AgentFare Loader v2 — editable
 // Add other hook requires to this array:
 const hooks = [
   require(${hookRequirePath}),
@@ -50,12 +47,17 @@ hooks.forEach(mod => {
   else if (typeof mod === 'function') mod();
 });
 `;
-    fs.writeFileSync(LOADER_FILE, content);
+
+  const needsRegen = !fs.existsSync(LOADER_FILE)
+    || !fs.readFileSync(LOADER_FILE, "utf-8").includes("mod.setup");
+
+  if (needsRegen) {
+    // Generate fresh loader.js (missing file or old format without mod.setup)
+    fs.writeFileSync(LOADER_FILE, LOADER_TEMPLATE);
   } else {
     // Update the require path in-place if it changed (e.g. after npm global update)
     // without overwriting user edits
     const existing = fs.readFileSync(LOADER_FILE, "utf-8");
-    // Match require("...") or require('...') in the hooks array
     const updated = existing.replace(
       /require\(["'][^"']*(@agentfare\/hook|agentfare.*hook[^"']*)["']\)/,
       `require(${hookRequirePath})`

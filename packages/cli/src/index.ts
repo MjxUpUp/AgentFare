@@ -21,6 +21,16 @@ program
   .version(require("../package.json").version)
   .exitOverride(); // throw instead of calling process.exit for wrong flags
 
+// Silently upgrade loader.js if it uses a stale format (e.g. old arrow-function
+// wrapper that never calls setup()). This ensures users get the fix just by
+// running any `agentfare` command — no manual re-init needed.
+void (async () => {
+  try {
+    const { ensureLoaderScript } = await import("@agentfare/loader");
+    ensureLoaderScript();
+  } catch { /* non-critical: init command will handle full setup */ }
+})();
+
 program.addCommand(initCommand);
 program.addCommand(costCommand);
 program.addCommand(configCommand);

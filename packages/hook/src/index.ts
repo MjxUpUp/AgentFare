@@ -37,6 +37,7 @@ export function setup(): void {
     installFetchPatch({
       handler,
       detector: new LLMDetector(registry),
+      registry,
       costTracker,
       qualitySignalCollector,
       onRouting: () => {},

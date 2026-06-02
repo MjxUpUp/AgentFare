@@ -3,7 +3,8 @@ import { isInternalRequest, extractHeaders } from "./headers.js";
 import type { RequestHandler, HandleResult } from "./request-handler.js";
 import { createStreamingResponseWrapper } from "./response-handler.js";
 import type { SSEProtocolConverter } from "./response-handler.js";
-import type { CostTracker, QualitySignalCollector } from "@agentfare/core";
+import type { CostTracker, QualitySignalCollector, StepAnalysis } from "@agentfare/core";
+import type { ModelRegistry, ModelEntry } from "@agentfare/models";
 import { convertOpenAIToAnthropicRequest } from "./protocol/openai-to-anthropic.js";
 import { convertAnthropicToOpenAIResponse } from "./protocol/anthropic-to-openai.js";
 import { convertAnthropicSSEToOpenAI } from "./protocol/sse-transform.js";
@@ -17,6 +18,7 @@ const ANALYZER_TIMEOUT_MS = 500;
 export interface FetchPatchOptions {
   handler: RequestHandler;
   detector: LLMDetector;
+  registry?: ModelRegistry;
   costTracker?: CostTracker;
   qualitySignalCollector?: QualitySignalCollector;
   onlineLearner?: any;
@@ -88,10 +90,31 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
       if (handlerError) throw handlerError;
 
       if (!result || !result.decision.targetModel) {
-        return originalFetch.call(this, input, init);
+        // Pass-through: no reroute, but still track cost for observability
+        const response = await originalFetch.call(this, input, init);
+        if (options.costTracker && response.body && isStreamingResponse(response)) {
+          const protocol = detectProtocolFromUrl(url);
+          const modelEntry = options.registry && currentModel ? lookupModel(options.registry, currentModel) : undefined;
+          const sid = headers["x-request-id"] ?? headers["x-session-id"] ?? generatePassThroughId();
+          return createStreamingResponseWrapper(response, protocol, (tokens) => {
+            if (modelEntry) {
+              options.costTracker!.record(
+                PASS_THROUGH_ANALYSIS,
+                currentModel ?? "",
+                modelEntry,
+                modelEntry,
+                sid,
+                "unknown",
+                tokens,
+              );
+            }
+          });
+        }
+        return response;
       }
 
       const targetModel = result.decision.targetModel;
+      const originalModelEntry = options.registry && currentModel ? lookupModel(options.registry, currentModel) : undefined;
 
       const modifiedInit: RequestInit = {
         ...init,
@@ -202,7 +225,7 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
             options.costTracker.record(
               result.analysis,
               body.model ?? "",
-              undefined,
+              originalModelEntry,
               targetModel,
               result.sessionId,
               "unknown",
@@ -266,6 +289,54 @@ function detectProtocolFromUrl(url: string): "openai" | "anthropic" {
     return "anthropic";
   }
   return "openai";
+}
+
+/**
+ * Lookup a model by ID, trying multiple strategies:
+ * 1. Exact match on registry id (e.g. "anthropic/claude-sonnet-4-6")
+ * 2. Exact match on api.modelId (e.g. "claude-sonnet-4-6")
+ * 3. Strip Anthropic date suffix (e.g. "claude-sonnet-4-20250514" → "claude-sonnet-4")
+ *    then match by prefix (finds "claude-sonnet-4-6")
+ */
+function lookupModel(registry: ModelRegistry, modelId: string): ModelEntry | undefined {
+  // 1. Exact match on id
+  const exact = registry.get(modelId);
+  if (exact) return exact;
+
+  const all = registry.getAll();
+
+  // 2. Exact match on api.modelId
+  const byApiId = all.find(m => m.api.modelId === modelId);
+  if (byApiId) return byApiId;
+
+  // 3. Strip date suffix (-YYYYMMDD) and match by prefix
+  const stripped = modelId.replace(/-\d{8}$/, "");
+  if (stripped !== modelId) {
+    // "claude-sonnet-4" → match "claude-sonnet-4-6" (prefix + dash + version)
+    const byPrefix = all.find(m =>
+      m.api.modelId === stripped || m.api.modelId.startsWith(stripped + "-"),
+    );
+    if (byPrefix) return byPrefix;
+  }
+
+  return undefined;
+}
+
+const PASS_THROUGH_ANALYSIS: StepAnalysis = {
+  stepType: "unknown",
+  difficulty: 0.5,
+  confidence: 0.3,
+  recommendedTier: "standard",
+  recommendedModel: "",
+  reasoning: "pass-through (no reroute)",
+  needsProviderSwitch: false,
+  estimatedTokens: { input: 0, output: 0 },
+  alternatives: [],
+};
+
+let passThroughCounter = 0;
+function generatePassThroughId(): string {
+  return `pt-${Date.now()}-${++passThroughCounter}`;
 }
 
 export function getOriginalFetch(): typeof globalThis.fetch {
