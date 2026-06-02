@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name("agentfare")
   .description("AI Agent 智能模型路由 — 成本优化工具")
-  .version("0.1.0")
+  .version(require("../package.json").version)
   .exitOverride(); // throw instead of calling process.exit for wrong flags
 
 program.addCommand(initCommand);
