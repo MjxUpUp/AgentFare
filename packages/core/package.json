@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/core",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Core routing engine, cost tracker, and optimizer for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",
