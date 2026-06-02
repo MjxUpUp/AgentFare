@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/core",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Core routing engine, cost tracker, and optimizer for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",
@@ -22,7 +22,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentfare/models": "workspace:*"
+    "@agentfare/models": "^0.1.3"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.0.0"

@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/loader",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Module loader for injecting AgentFare hooks at runtime",
   "license": "MIT",
   "main": "dist/index.js",
@@ -22,7 +22,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentfare/hook": "workspace:*"
+    "@agentfare/hook": "^0.1.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

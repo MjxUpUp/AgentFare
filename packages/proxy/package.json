@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/proxy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "HTTP proxy server with provider routing and SSE streaming for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",
@@ -31,9 +31,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentfare/core": "workspace:*",
-    "@agentfare/hook": "workspace:*",
-    "@agentfare/models": "workspace:*"
+    "@agentfare/core": "^0.1.3",
+    "@agentfare/hook": "^0.1.3",
+    "@agentfare/models": "^0.1.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
