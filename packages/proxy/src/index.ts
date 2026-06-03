@@ -15,6 +15,7 @@ export {
   stopProxy,
   getProxyStatus,
   isProxyRunning,
+  isProxyVersionCurrent,
   readProxyState,
   getProxyStatePath,
   type ProxyState,

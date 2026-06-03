@@ -16,6 +16,7 @@ export interface ProxyState {
   pid: number;
   port: number;
   startedAt: string;
+  cliVersion?: string;
 }
 
 /** Get the path to the proxy state file. */
@@ -171,6 +172,16 @@ export async function startProxyDaemon(port: number): Promise<StartResult> {
 
   // Read the PID from state file (written by the daemon)
   const state = readProxyState();
+
+  // Stamp CLI version into state so we can detect stale proxies on upgrade
+  if (state) {
+    const cliVersion = getCliVersion();
+    if (cliVersion) {
+      state.cliVersion = cliVersion;
+      writeProxyState(state);
+    }
+  }
+
   return { success: true, port, pid: state?.pid ?? child.pid ?? 0 };
 }
 
@@ -274,4 +285,31 @@ export function getProxyStatus(): {
     port: state?.port,
     startedAt: state?.startedAt,
   };
+}
+
+/**
+ * Read CLI version from the installed @agentfare/cli package.
+ * Returns undefined if version cannot be determined.
+ */
+function getCliVersion(): string | undefined {
+  try {
+    // Resolve @agentfare/cli package.json from the perspective of this module
+    const cliPkgPath = require.resolve("@agentfare/cli/package.json");
+    const pkg = JSON.parse(fs.readFileSync(cliPkgPath, "utf-8"));
+    return pkg.version;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Check if the running proxy was started by the same CLI version.
+ * Returns true if versions match or version info is unavailable.
+ */
+export function isProxyVersionCurrent(): boolean {
+  const state = readProxyState();
+  if (!state?.cliVersion) return true; // no version info — assume current
+  const current = getCliVersion();
+  if (!current) return true;
+  return state.cliVersion === current;
 }

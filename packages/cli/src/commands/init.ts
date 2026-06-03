@@ -7,7 +7,7 @@
 
 import { Command } from "commander";
 import { detectTools, writeProxyConfig, writeConfig } from "@agentfare/setup";
-import { startProxyDaemon, getProxyStatus, type StartResult } from "@agentfare/proxy";
+import { startProxyDaemon, getProxyStatus, isProxyVersionCurrent, stopProxy, type StartResult } from "@agentfare/proxy";
 import { ensureLoaderScript } from "@agentfare/loader";
 
 const DEFAULT_PORT = 3456;
@@ -54,8 +54,22 @@ async function runProxyInit(toolFilter: string | undefined, port: number): Promi
 
   if (existingStatus.running) {
     const effectivePort = existingStatus.port ?? port;
-    console.log(`Proxy already running (PID ${existingStatus.pid}, port ${effectivePort})`);
-    result = { success: true, port: effectivePort, pid: existingStatus.pid! };
+    if (!isProxyVersionCurrent()) {
+      // Running proxy is from an older CLI version — restart it
+      console.log(`Proxy outdated (PID ${existingStatus.pid}), restarting with current version...`);
+      stopProxy();
+      // Brief wait for process to die
+      await new Promise((r) => setTimeout(r, 500));
+      result = await startProxyDaemon(effectivePort);
+      if (!result.success) {
+        console.error(`Proxy 重启失败: ${result.error}`);
+        process.exit(1);
+      }
+      console.log(`AgentFare proxy restarted on port ${result.port} (PID ${result.pid})`);
+    } else {
+      console.log(`Proxy already running (PID ${existingStatus.pid}, port ${effectivePort})`);
+      result = { success: true, port: effectivePort, pid: existingStatus.pid! };
+    }
   } else {
     result = await startProxyDaemon(port);
     if (!result.success) {
