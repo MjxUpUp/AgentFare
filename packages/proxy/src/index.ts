@@ -10,6 +10,8 @@
 export { createProxyServer, type ProxyServerOptions, type ProxyServerDeps } from "./server.js";
 export {
   startProxy,
+  startProxyDaemon,
+  waitForProxy,
   stopProxy,
   getProxyStatus,
   isProxyRunning,

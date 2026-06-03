@@ -23,7 +23,8 @@
     "./provider-map": "./dist/provider-map.js",
     "./key-store": "./dist/key-store.js",
     "./sse-pipe": "./dist/sse-pipe.js",
-    "./tool-guide": "./dist/tool-guide.js"
+    "./tool-guide": "./dist/tool-guide.js",
+    "./daemon-entry": "./dist/daemon-entry.js"
   },
   "scripts": {
     "build": "tsc",

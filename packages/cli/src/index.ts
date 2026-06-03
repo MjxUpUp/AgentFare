@@ -21,13 +21,19 @@ program
   .version(require("../package.json").version)
   .exitOverride(); // throw instead of calling process.exit for wrong flags
 
-// Silently upgrade loader.js if it uses a stale format (e.g. old arrow-function
-// wrapper that never calls setup()). This ensures users get the fix just by
-// running any `agentfare` command — no manual re-init needed.
+// Silently upgrade loader.js if it already exists (i.e. user previously used
+// hook mode). Only runs when ~/.agentfare/loader.js is present — new proxy-first
+// users never trigger this.
 void (async () => {
   try {
-    const { ensureLoaderScript } = await import("@agentfare/loader");
-    ensureLoaderScript();
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const os = require("node:os") as typeof import("node:os");
+    const loaderPath = path.join(os.homedir(), ".agentfare", "loader.js");
+    if (fs.existsSync(loaderPath)) {
+      const { ensureLoaderScript } = await import("@agentfare/loader");
+      ensureLoaderScript();
+    }
   } catch { /* non-critical: init command will handle full setup */ }
 })();
 

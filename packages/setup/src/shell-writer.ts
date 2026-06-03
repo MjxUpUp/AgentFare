@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { detectPlatform, type Platform } from "./detector.js";
+import { detectPlatform, type Platform, type DetectedTool } from "./detector.js";
 
 const MARKER_START = "# >>> agentfare >>>";
 const MARKER_END = "# <<< agentfare <<<";
@@ -146,4 +146,45 @@ export function writeConfig(
   const content = generateShellFunctions(tools);
   const rcPath = writeShellConfig(content);
   return { rcPath, platform };
+}
+
+// ---------------------------------------------------------------------------
+// Proxy export 生成器
+// ---------------------------------------------------------------------------
+
+export function generateProxyExports(
+  tools: Array<DetectedTool>,
+  port: number
+): string {
+  const lines = tools
+    .filter((t) => t.type === "cli" && t.envVar && t.proxyPath)
+    .map((t) => `export ${t.envVar}="http://localhost:${port}${t.proxyPath}"`)
+    .join("\n")
+  return `${MARKER_START}\n${lines}\n${MARKER_END}`
+}
+
+export function generatePowerShellExports(
+  tools: Array<DetectedTool>,
+  port: number
+): string {
+  const lines = tools
+    .filter((t) => t.type === "cli" && t.envVar && t.proxyPath)
+    .map((t) => `$env:${t.envVar} = "http://localhost:${port}${t.proxyPath}"`)
+    .join("\n")
+  return `${MARKER_START}\n${lines}\n${MARKER_END}`
+}
+
+export function writeProxyConfig(
+  tools: Array<DetectedTool>,
+  port: number
+): { rcPath: string; platform: Platform } {
+  const platform = detectPlatform()
+  if (platform === "windows-native") {
+    const content = generatePowerShellExports(tools, port)
+    const rcPath = writePowerShellProfile(content)
+    return { rcPath, platform }
+  }
+  const content = generateProxyExports(tools, port)
+  const rcPath = writeShellConfig(content)
+  return { rcPath, platform }
 }

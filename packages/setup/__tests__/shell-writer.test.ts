@@ -8,7 +8,11 @@ import {
   generatePowerShellFunctions,
   writePowerShellProfile,
   getPowerShellProfilePath,
+  generateProxyExports,
+  generatePowerShellExports,
+  writeProxyConfig,
 } from "../src/shell-writer.js";
+import { detectPlatform, type DetectedTool } from "../src/detector.js";
 
 describe("generateShellFunctions", () => {
   it("should generate shell functions for detected tools", () => {
@@ -208,5 +212,112 @@ describe("writePowerShellProfile", () => {
     const content = generatePowerShellFunctions([{ name: "claude" }]);
     const writtenPath = writePowerShellProfile(content);
     expect(writtenPath).toContain("WindowsPowerShell");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Proxy export generators
+// ---------------------------------------------------------------------------
+
+const cliTools: DetectedTool[] = [
+  { name: "claude" as const, type: "cli" as const, envVar: "ANTHROPIC_BASE_URL", proxyPath: "/anthropic", provider: "anthropic", envKey: "ANTHROPIC_API_KEY", envKeyPresent: true, path: "/usr/local/bin/claude" },
+  { name: "codex" as const, type: "cli" as const, envVar: "OPENAI_BASE_URL", proxyPath: "/openai", provider: "openai", envKey: "OPENAI_API_KEY", envKeyPresent: false, path: "/usr/local/bin/codex" },
+];
+const ideTools: DetectedTool[] = [
+  { name: "cursor" as const, type: "ide" as const, proxyPath: "/openai", provider: "openai", envKey: "OPENAI_API_KEY", envKeyPresent: false, path: "/Applications/Cursor.app" },
+];
+
+describe("generateProxyExports", () => {
+  it("should generate export lines for CLI tools", () => {
+    const result = generateProxyExports(cliTools, 3456);
+    expect(result).toContain('export ANTHROPIC_BASE_URL="http://localhost:3456/anthropic"');
+    expect(result).toContain('export OPENAI_BASE_URL="http://localhost:3456/openai"');
+  });
+
+  it("should filter out IDE tools", () => {
+    const mixed = [...cliTools, ...ideTools];
+    const result = generateProxyExports(mixed, 3456);
+    expect(result).not.toContain("cursor");
+    expect(result).toContain("ANTHROPIC_BASE_URL");
+    expect(result).toContain("OPENAI_BASE_URL");
+  });
+
+  it("should wrap output in markers", () => {
+    const result = generateProxyExports(cliTools, 3456);
+    expect(result).toContain("# >>> agentfare >>>");
+    expect(result).toContain("# <<< agentfare <<<");
+  });
+});
+
+describe("generatePowerShellExports", () => {
+  it("should generate $env: lines for CLI tools", () => {
+    const result = generatePowerShellExports(cliTools, 3456);
+    expect(result).toContain('$env:ANTHROPIC_BASE_URL = "http://localhost:3456/anthropic"');
+    expect(result).toContain('$env:OPENAI_BASE_URL = "http://localhost:3456/openai"');
+  });
+
+  it("should wrap output in markers", () => {
+    const result = generatePowerShellExports(cliTools, 3456);
+    expect(result).toContain("# >>> agentfare >>>");
+    expect(result).toContain("# <<< agentfare <<<");
+  });
+});
+
+describe("writeProxyConfig", () => {
+  let tmpHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(() => {
+    tmpHome = path.join(os.tmpdir(), `agentfare-proxy-test-${Date.now()}`);
+    fs.mkdirSync(tmpHome, { recursive: true });
+    originalHome = process.env.HOME;
+    process.env.HOME = tmpHome;
+    process.env.USERPROFILE = tmpHome;
+  });
+
+  afterEach(() => {
+    process.env.HOME = originalHome;
+    process.env.USERPROFILE = originalHome;
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it("writes proxy exports to shell config", () => {
+    const platform = detectPlatform();
+    if (platform === "windows-native") {
+      // writeProxyConfig delegates to PowerShell on Windows
+      const { rcPath } = writeProxyConfig(cliTools, 3456);
+      expect(fs.existsSync(rcPath)).toBe(true);
+      const result = fs.readFileSync(rcPath, "utf-8");
+      expect(result).toContain('$env:ANTHROPIC_BASE_URL = "http://localhost:3456/anthropic"');
+      expect(result).toContain('$env:OPENAI_BASE_URL = "http://localhost:3456/openai"');
+    } else {
+      // POSIX: writes to .bashrc
+      const bashrc = path.join(tmpHome, ".bashrc");
+      fs.writeFileSync(bashrc, "# my bashrc\n");
+      writeProxyConfig(cliTools, 3456);
+      const result = fs.readFileSync(bashrc, "utf-8");
+      expect(result).toContain('export ANTHROPIC_BASE_URL="http://localhost:3456/anthropic"');
+      expect(result).toContain('export OPENAI_BASE_URL="http://localhost:3456/openai"');
+    }
+  });
+
+  it("idempotent: writing twice produces only one set of markers", () => {
+    const platform = detectPlatform();
+    if (platform === "windows-native") {
+      writeProxyConfig(cliTools, 3456);
+      writeProxyConfig(cliTools, 3456);
+      const profilePath = getPowerShellProfilePath();
+      const result = fs.readFileSync(profilePath, "utf-8");
+      const markerCount = (result.match(/# >>> agentfare >>>/g) || []).length;
+      expect(markerCount).toBe(1);
+    } else {
+      const bashrc = path.join(tmpHome, ".bashrc");
+      fs.writeFileSync(bashrc, "# my bashrc\n");
+      writeProxyConfig(cliTools, 3456);
+      writeProxyConfig(cliTools, 3456);
+      const result = fs.readFileSync(bashrc, "utf-8");
+      const markerCount = (result.match(/# >>> agentfare >>>/g) || []).length;
+      expect(markerCount).toBe(1);
+    }
   });
 });

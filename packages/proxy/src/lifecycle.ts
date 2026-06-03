@@ -7,6 +7,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as http from "node:http";
+import { fork } from "node:child_process";
 import { getBaseDir } from "@agentfare/models";
 import { createProxyServer, type ProxyServerOptions } from "./server.js";
 
@@ -122,7 +124,107 @@ export async function startProxy(
 }
 
 /**
- * Stop the proxy server by sending SIGTERM to the process.
+ * Start the proxy as a detached background daemon.
+ *
+ * Forks a child process running daemon-entry.ts, waits for it to
+ * become healthy, then returns. The parent process can exit independently.
+ */
+export async function startProxyDaemon(port: number): Promise<StartResult> {
+  // Check if already running
+  if (isProxyRunning()) {
+    const state = readProxyState()!;
+    // Verify it's actually responsive
+    const healthy = await waitForProxy(state.port, 2000);
+    if (healthy) {
+      return { success: true, port: state.port, pid: state.pid };
+    }
+    // Stale state — clean up
+    clearProxyState();
+  }
+
+  // Resolve daemon-entry.ts path (from this file's location)
+  const daemonPath = path.join(__dirname, "daemon-entry.js");
+
+  // Open log file for daemon output
+  const logPath = path.join(getBaseDir(), "proxy.log");
+  const logDir = path.dirname(logPath);
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+  const logStream = fs.openSync(logPath, "a");
+
+  const child = fork(daemonPath, ["--port", String(port)], {
+    detached: true,
+    stdio: ["ignore", logStream, logStream],
+  });
+
+  // Close the log FD in the parent — the child has inherited it
+  try { fs.closeSync(logStream); } catch {}
+
+  child.unref();
+
+  // Wait for the daemon to become healthy
+  const healthy = await waitForProxy(port, 5000);
+  if (!healthy) {
+    return { success: false, port, pid: 0, error: "Proxy daemon failed to start (health check timeout)" };
+  }
+
+  // Read the PID from state file (written by the daemon)
+  const state = readProxyState();
+  return { success: true, port, pid: state?.pid ?? child.pid ?? 0 };
+}
+
+/**
+ * Wait for the proxy to respond to a health check.
+ *
+ * @param port - Port to check
+ * @param timeoutMs - Maximum time to wait
+ * @returns true if healthy, false if timeout
+ */
+export async function waitForProxy(port: number, timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  const intervalMs = 200;
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const healthy = await healthCheck(port);
+      if (healthy) return true;
+    } catch {
+      // Not yet listening
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
+/**
+ * Send a GET /health request to the proxy.
+ */
+function healthCheck(port: number): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: "localhost", port, path: "/health", method: "GET", timeout: 1000 },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(body);
+            resolve(json.status === "ok");
+          } catch {
+            resolve(false);
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+    req.end();
+  });
+}
+
+/**
+ * Stop the proxy server by sending a signal to the process.
  */
 export function stopProxy(): { success: boolean; error?: string } {
   const state = readProxyState();
@@ -131,7 +233,13 @@ export function stopProxy(): { success: boolean; error?: string } {
   }
 
   try {
-    process.kill(state.pid, "SIGTERM");
+    // Windows: process.kill(pid) without signal terminates the process.
+    // Unix: use SIGTERM for graceful shutdown.
+    if (process.platform === "win32") {
+      process.kill(state.pid);
+    } else {
+      process.kill(state.pid, "SIGTERM");
+    }
   } catch (err: any) {
     if (err.code === "ESRCH") {
       // Process already dead

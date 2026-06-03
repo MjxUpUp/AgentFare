@@ -3,8 +3,8 @@ import { generateShellFunctions, writeShellConfig } from "./shell-writer.js";
 import { validateHookInjection } from "./validator.js";
 import { reportStatus } from "./reporter.js";
 
-export { detectTools, detectPlatform } from "./detector.js";
-export { generateShellFunctions, writeShellConfig, generatePowerShellFunctions, getPowerShellProfilePath, writePowerShellProfile, writeConfig } from "./shell-writer.js";
+export { detectTools, detectPlatform, type ToolName, type DetectedTool, type Platform } from "./detector.js";
+export { generateShellFunctions, writeShellConfig, generatePowerShellFunctions, getPowerShellProfilePath, writePowerShellProfile, writeConfig, generateProxyExports, generatePowerShellExports, writeProxyConfig } from "./shell-writer.js";
 export { validateHookInjection } from "./validator.js";
 export { reportStatus } from "./reporter.js";
 
