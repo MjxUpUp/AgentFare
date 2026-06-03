@@ -10,7 +10,7 @@
 import * as nodeHttps from "node:https";
 import * as nodeHttp from "node:http";
 import { URL } from "node:url";
-import { resolveProvider, getUpstreamPath, buildVirtualUrl } from "./provider-map.js";
+import { resolveProvider, getUpstreamPath, buildVirtualUrl, type ProviderInfo } from "./provider-map.js";
 import { resolveApiKey, buildAuthHeaders } from "./key-store.js";
 import { SSEPipe, type StreamTokenData } from "./sse-pipe.js";
 import type { RequestHandler, HandleResult } from "@agentfare/hook/request-handler";
@@ -42,6 +42,8 @@ export interface ProxyServerDeps {
   qualitySignalCollector?: QualitySignalCollector;
   onlineLearner?: any;
   registry?: ModelRegistry;
+  /** Dynamic provider map (built from config). Falls back to DEFAULT if not provided. */
+  providerMap?: Record<string, ProviderInfo>;
 }
 
 export interface ProxyServerOptions {
@@ -105,7 +107,7 @@ async function handleRequest(
   }
 
   // Resolve provider from path prefix
-  const providerInfo = resolveProvider(requestPath);
+  const providerInfo = resolveProvider(requestPath, options.deps.providerMap);
   if (!providerInfo) {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "unknown_provider", path: requestPath }));

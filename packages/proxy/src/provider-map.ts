@@ -6,8 +6,11 @@
  *   OPENAI_BASE_URL=http://localhost:3456/openai
  *
  * The proxy uses the first path segment to determine the source provider and protocol.
+ *
+ * ISSUE-106/088: Now dynamically built from config, supporting user-defined upstream URLs.
  */
 
+import type { AgentFareConfig } from "@agentfare/core";
 import { DEFAULT_CONFIG } from "@agentfare/core";
 
 export interface ProviderInfo {
@@ -19,52 +22,66 @@ export interface ProviderInfo {
   upstreamBaseUrl: string;
 }
 
-/**
- * Mapping from URL path prefix to provider info.
- * Derived from DEFAULT_CONFIG.providers and known protocol info.
- */
-const PROVIDER_MAP: Record<string, ProviderInfo> = {
-  openai: {
-    provider: "openai",
-    protocol: "openai",
-    upstreamBaseUrl: DEFAULT_CONFIG.providers.openai!.baseUrl,
-  },
-  anthropic: {
-    provider: "anthropic",
-    protocol: "anthropic",
-    upstreamBaseUrl: DEFAULT_CONFIG.providers.anthropic!.baseUrl,
-  },
-  deepseek: {
-    provider: "deepseek",
-    protocol: "openai",
-    upstreamBaseUrl: DEFAULT_CONFIG.providers.deepseek!.baseUrl,
-  },
+/** Known protocol for each provider. Used when building the provider map. */
+const KNOWN_PROTOCOLS: Record<string, "openai" | "anthropic"> = {
+  openai: "openai",
+  anthropic: "anthropic",
+  deepseek: "openai",
+  google: "openai",
+  zhipu: "openai",
+  moonshot: "openai",
+  alibaba: "openai",
+  xiaomi: "openai",
+};
+
+/** Extra providers not in DEFAULT_CONFIG.providers but needed by the proxy. */
+const EXTRA_PROVIDERS: Record<string, { baseUrl: string; protocol: "openai" | "anthropic" }> = {
   google: {
-    provider: "google",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     protocol: "openai",
-    upstreamBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-  },
-  zhipu: {
-    provider: "zhipu",
-    protocol: "openai",
-    upstreamBaseUrl: DEFAULT_CONFIG.providers.zhipu!.baseUrl,
-  },
-  moonshot: {
-    provider: "moonshot",
-    protocol: "openai",
-    upstreamBaseUrl: DEFAULT_CONFIG.providers.moonshot!.baseUrl,
-  },
-  alibaba: {
-    provider: "alibaba",
-    protocol: "openai",
-    upstreamBaseUrl: DEFAULT_CONFIG.providers.alibaba!.baseUrl,
-  },
-  xiaomi: {
-    provider: "xiaomi",
-    protocol: "openai",
-    upstreamBaseUrl: DEFAULT_CONFIG.providers.xiaomi!.baseUrl,
   },
 };
+
+/**
+ * Build a provider map from the given config.
+ *
+ * For each provider in config.providers:
+ * - Uses `upstreamUrl` if set (captured from user's env vars during init),
+ *   otherwise falls back to `baseUrl`.
+ * - Protocol is determined from KNOWN_PROTOCOLS, falling back to "openai".
+ *
+ * Also includes any EXTRA_PROVIDERS not in config.
+ */
+export function buildProviderMap(config: AgentFareConfig): Record<string, ProviderInfo> {
+  const map: Record<string, ProviderInfo> = {};
+
+  // Build from config.providers
+  for (const [name, providerConfig] of Object.entries(config.providers)) {
+    const upstreamUrl = providerConfig.upstreamUrl ?? providerConfig.baseUrl;
+    const protocol = KNOWN_PROTOCOLS[name] ?? "openai";
+    map[name] = {
+      provider: name,
+      protocol,
+      upstreamBaseUrl: upstreamUrl,
+    };
+  }
+
+  // Add extra providers not covered by config
+  for (const [name, extra] of Object.entries(EXTRA_PROVIDERS)) {
+    if (!map[name]) {
+      map[name] = {
+        provider: name,
+        protocol: extra.protocol,
+        upstreamBaseUrl: extra.baseUrl,
+      };
+    }
+  }
+
+  return map;
+}
+
+/** Default provider map built from DEFAULT_CONFIG. Used for backward compatibility. */
+const DEFAULT_PROVIDER_MAP = buildProviderMap(DEFAULT_CONFIG);
 
 /**
  * Resolve provider info from the incoming request path.
@@ -75,12 +92,16 @@ const PROVIDER_MAP: Record<string, ProviderInfo> = {
  *   resolveProvider("/openai/v1/chat/completions") → { provider: "openai", protocol: "openai", upstreamBaseUrl: "..." }
  *   resolveProvider("/health") → null
  */
-export function resolveProvider(requestPath: string): ProviderInfo | null {
+export function resolveProvider(
+  requestPath: string,
+  providerMap?: Record<string, ProviderInfo>
+): ProviderInfo | null {
+  const map = providerMap ?? DEFAULT_PROVIDER_MAP;
   // Normalize: remove leading slash, get first segment
   const segments = requestPath.replace(/^\//, "").split("/");
   const prefix = segments[0]?.toLowerCase();
   if (!prefix) return null;
-  return PROVIDER_MAP[prefix] ?? null;
+  return map[prefix] ?? null;
 }
 
 /**
@@ -108,6 +129,6 @@ export function buildVirtualUrl(providerInfo: ProviderInfo, upstreamPath: string
 /**
  * Get all registered provider prefixes (for health/debug).
  */
-export function getRegisteredProviders(): string[] {
-  return Object.keys(PROVIDER_MAP);
+export function getRegisteredProviders(providerMap?: Record<string, ProviderInfo>): string[] {
+  return Object.keys(providerMap ?? DEFAULT_PROVIDER_MAP);
 }

@@ -26,6 +26,7 @@ export {
   getUpstreamPath,
   buildVirtualUrl,
   getRegisteredProviders,
+  buildProviderMap,
   type ProviderInfo,
 } from "./provider-map.js";
 export {

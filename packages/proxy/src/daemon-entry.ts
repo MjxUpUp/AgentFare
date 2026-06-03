@@ -12,6 +12,7 @@ import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollect
 import { ModelRegistry, getDbPath } from "@agentfare/models";
 import { RequestHandler } from "@agentfare/hook/request-handler";
 import { startProxy } from "./lifecycle.js";
+import { buildProviderMap } from "./provider-map.js";
 
 // Parse --port from argv
 function parsePort(): number {
@@ -31,6 +32,9 @@ async function main(): Promise<void> {
   const config = loadConfigFromDisk();
   const registry = new ModelRegistry(config.customModels as any);
   const handler = new RequestHandler(config, registry);
+
+  // ISSUE-106: Build dynamic provider map from config (supports user's custom upstream URLs)
+  const providerMap = buildProviderMap(config);
 
   const dbPath = getDbPath();
   const db = new TrackingDatabase(dbPath);
@@ -53,7 +57,7 @@ async function main(): Promise<void> {
 
   const result = await startProxy({
     port,
-    deps: { handler, costTracker, qualitySignalCollector, registry },
+    deps: { handler, costTracker, qualitySignalCollector, registry, providerMap },
   });
 
   if (!result.success) {

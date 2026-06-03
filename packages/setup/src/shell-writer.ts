@@ -174,6 +174,28 @@ export function generatePowerShellExports(
   return `${MARKER_START}\n${lines}\n${MARKER_END}`
 }
 
+/**
+ * Capture user's current *_BASE_URL env var values before proxy overwrites them.
+ * Returns a map of provider name → original URL.
+ * Only captures non-empty, non-localhost values.
+ */
+export function captureUserBaseUrls(
+  tools: Array<DetectedTool>
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const tool of tools) {
+    if (!tool.envVar || !tool.provider) continue;
+    const value = process.env[tool.envVar];
+    if (!value) continue;
+    // Skip localhost/proxy URLs (already pointing at a proxy)
+    if (value.startsWith("http://localhost:") || value.startsWith("http://127.0.0.1:")) continue;
+    // Skip if we already captured this provider
+    if (result[tool.provider]) continue;
+    result[tool.provider] = value;
+  }
+  return result;
+}
+
 export function writeProxyConfig(
   tools: Array<DetectedTool>,
   port: number

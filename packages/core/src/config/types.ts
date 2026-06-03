@@ -18,6 +18,8 @@ export interface RoutingConfig {
 
 export interface ProviderConfig {
   baseUrl: string;
+  /** User's original upstream URL (captured before proxy overwrites env vars) */
+  upstreamUrl?: string;
 }
 
 export interface TrackingConfig {

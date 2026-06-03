@@ -6,9 +6,12 @@
  */
 
 import { Command } from "commander";
-import { detectTools, writeProxyConfig, writeConfig } from "@agentfare/setup";
+import { detectTools, writeProxyConfig, writeConfig, captureUserBaseUrls } from "@agentfare/setup";
 import { startProxyDaemon, getProxyStatus, isProxyVersionCurrent, stopProxy, type StartResult } from "@agentfare/proxy";
 import { ensureLoaderScript } from "@agentfare/loader";
+import { getConfigPath } from "@agentfare/models";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 const DEFAULT_PORT = 3456;
 
@@ -48,7 +51,17 @@ async function runProxyInit(toolFilter: string | undefined, port: number): Promi
   const cliTools = tools.filter((t) => t.type === "cli");
   const ideTools = tools.filter((t) => t.type === "ide");
 
-  // 2. Start proxy daemon (if not already running)
+  // 2. Capture user's current BASE_URL values BEFORE overwriting them
+  const capturedUrls = captureUserBaseUrls(cliTools);
+  if (Object.keys(capturedUrls).length > 0) {
+    saveUpstreamUrls(capturedUrls);
+    console.log("Captured upstream URLs:");
+    for (const [provider, url] of Object.entries(capturedUrls)) {
+      console.log(`  ${provider}: ${url}`);
+    }
+  }
+
+  // 3. Start proxy daemon (if not already running)
   const existingStatus = getProxyStatus();
   let result: StartResult;
 
@@ -79,7 +92,7 @@ async function runProxyInit(toolFilter: string | undefined, port: number): Promi
     console.log(`AgentFare proxy started on port ${result.port} (PID ${result.pid})`);
   }
 
-  // 3. Write shell exports for CLI tools
+  // 4. Write shell exports for CLI tools
   if (cliTools.length > 0) {
     const { rcPath, platform } = writeProxyConfig(cliTools, result.port);
 
@@ -100,7 +113,7 @@ async function runProxyInit(toolFilter: string | undefined, port: number): Promi
     }
   }
 
-  // 4. Print IDE tool instructions
+  // 5. Print IDE tool instructions
   if (ideTools.length > 0) {
     console.log("");
     console.log("IDE tools (configure manually):");
@@ -134,6 +147,37 @@ function toolDisplayName(name: string): string {
     qwen: "Qwen/阿里",
   };
   return names[name] ?? name;
+}
+
+/**
+ * Save captured upstream URLs into ~/.agentfare/config.json
+ * so the proxy daemon can read them on startup.
+ */
+function saveUpstreamUrls(urls: Record<string, string>): void {
+  const configPath = getConfigPath();
+  const dir = path.dirname(configPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  let config: Record<string, any> = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    } catch {
+      config = {};
+    }
+  }
+
+  if (!config.providers) config.providers = {};
+  for (const [provider, url] of Object.entries(urls)) {
+    if (!config.providers[provider]) {
+      config.providers[provider] = {};
+    }
+    config.providers[provider].upstreamUrl = url;
+  }
+
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
 }
 
 // ---------------------------------------------------------------------------
