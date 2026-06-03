@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/proxy",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "HTTP proxy server with provider routing and SSE streaming for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",

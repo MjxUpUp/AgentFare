@@ -5,9 +5,9 @@ import * as os from "node:os";
 import * as http from "node:http";
 import { waitForProxy, stopProxy, getProxyStatePath } from "../src/lifecycle.js";
 
-// Mock child_process so fork() returns a stub instead of spawning a real process.
+// Mock child_process so spawn() returns a stub instead of spawning a real process.
 vi.mock("node:child_process", () => ({
-  fork: vi.fn().mockReturnValue({
+  spawn: vi.fn().mockReturnValue({
     unref: () => {},
     pid: 12345,
   }),

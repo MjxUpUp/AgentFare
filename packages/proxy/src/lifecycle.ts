@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as http from "node:http";
-import { fork } from "node:child_process";
+import { spawn } from "node:child_process";
 import { getBaseDir } from "@agentfare/models";
 import { createProxyServer, type ProxyServerOptions } from "./server.js";
 
@@ -153,7 +153,7 @@ export async function startProxyDaemon(port: number): Promise<StartResult> {
   }
   const logStream = fs.openSync(logPath, "a");
 
-  const child = fork(daemonPath, ["--port", String(port)], {
+  const child = spawn(process.execPath, [daemonPath, "--port", String(port)], {
     detached: true,
     stdio: ["ignore", logStream, logStream],
   });
