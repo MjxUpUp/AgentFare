@@ -3,18 +3,24 @@ import { isInternalRequest, extractHeaders } from "./headers.js";
 import type { RequestHandler, HandleResult } from "./request-handler.js";
 import { createStreamingResponseWrapper } from "./response-handler.js";
 import type { SSEProtocolConverter } from "./response-handler.js";
-import type { CostTracker, QualitySignalCollector, StepAnalysis } from "@agentfare/core";
+import type { CostTracker, QualitySignalCollector } from "@agentfare/core";
 import { ModelRegistry } from "@agentfare/models";
 import type { ModelEntry } from "@agentfare/models";
-import { convertOpenAIToAnthropicRequest } from "./protocol/openai-to-anthropic.js";
 import { convertAnthropicToOpenAIResponse } from "./protocol/anthropic-to-openai.js";
-import { convertAnthropicSSEToOpenAI } from "./protocol/sse-transform.js";
-import { convertAnthropicToOpenAIRequest } from "./protocol/anthropic-to-openai-request.js";
 import { convertOpenAIToAnthropicResponse } from "./protocol/openai-to-anthropic-response.js";
-import { createSSEStreamConverter } from "./protocol/openai-to-anthropic-sse.js";
+import {
+  ANALYZER_TIMEOUT_MS,
+  PASS_THROUGH_ANALYSIS,
+  lookupModelEntry,
+  detectProtocol,
+  createSSEConverterForDirection,
+  convertRequestBody,
+  sanitizeDecisionForCallback,
+  asyncLogError,
+  generatePassThroughId,
+} from "./pipeline.js";
 
 const ORIGINAL_FETCH_SYMBOL = Symbol("agentfare:originalFetch");
-const ANALYZER_TIMEOUT_MS = 500;
 
 export interface FetchPatchOptions {
   handler: RequestHandler;
@@ -25,18 +31,6 @@ export interface FetchPatchOptions {
   onlineLearner?: any;
   onRouting?: (result: HandleResult) => void;
   onError?: (err: unknown) => void;
-}
-
-function logErrorToFile(err: unknown): void {
-  try {
-    const fs = require("node:fs") as typeof import("node:fs");
-    const path = require("node:path") as typeof import("node:path");
-    const os = require("node:os") as typeof import("node:os");
-    const logPath = path.join(os.homedir(), ".agentfare", "errors.log");
-    const timestamp = new Date().toISOString();
-    const message = err instanceof Error ? err.stack ?? err.message : String(err);
-    fs.appendFileSync(logPath, `[${timestamp}] ${message}\n`);
-  } catch {}
 }
 
 export function installFetchPatch(options: FetchPatchOptions): () => void {
@@ -95,8 +89,8 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
         // Pass-through: no reroute, but still track cost for observability
         const response = await originalFetch.call(this, input, init);
         if (options.costTracker && response.body && isStreamingResponse(response)) {
-          const protocol = detectProtocolFromUrl(url);
-          const modelEntry = options.registry && currentModel ? lookupModel(options.registry, currentModel) : undefined;
+          const protocol = detectProtocol(url);
+          const modelEntry = options.registry && currentModel ? lookupModelEntry(options.registry, currentModel) : undefined;
           const sid = headers["x-request-id"] ?? headers["x-session-id"] ?? generatePassThroughId();
           return createStreamingResponseWrapper(response, protocol, (tokens) => {
             if (modelEntry) {
@@ -116,7 +110,7 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
       }
 
       const targetModel = result.decision.targetModel;
-      const originalModelEntry = options.registry && currentModel ? lookupModel(options.registry, currentModel) : undefined;
+      const originalModelEntry = options.registry && currentModel ? lookupModelEntry(options.registry, currentModel) : undefined;
 
       const modifiedInit: RequestInit = {
         ...init,
@@ -132,7 +126,7 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
         const effectiveBaseUrl = result.decision.enterpriseConfig?.baseUrl ?? targetApi.baseUrl;
 
         // Detect source protocol from original URL
-        sourceProtocol = url.includes("anthropic.com") ? "anthropic" : "openai";
+        sourceProtocol = detectProtocol(url);
         const targetProtocol = targetApi.protocol;
         needsProtocolConversion = sourceProtocol !== targetProtocol;
 
@@ -154,20 +148,8 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
 
         // ISSUE-028: Protocol conversion — convert request body when crossing providers
         if (needsProtocolConversion && sourceProtocol) {
-          try {
-            const requestBody = JSON.parse(result.modifiedBody);
-            let converted: any;
-            if (sourceProtocol === "openai" && targetProtocol === "anthropic") {
-              converted = convertOpenAIToAnthropicRequest(requestBody, targetApi.modelId);
-            } else if (sourceProtocol === "anthropic" && targetProtocol === "openai") {
-              converted = convertAnthropicToOpenAIRequest(requestBody, targetApi.modelId);
-            }
-            if (converted) {
-              modifiedInit.body = JSON.stringify(converted);
-            }
-          } catch (conversionErr) {
-            logErrorToFile(`协议转换请求体失败: ${conversionErr}`);
-          }
+          const convertedBody = convertRequestBody(sourceProtocol, targetProtocol, result.modifiedBody, targetApi.modelId);
+          modifiedInit.body = convertedBody;
         }
       }
 
@@ -175,7 +157,7 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
 
       // 5xx fallback
       if (response.status >= 500) {
-        logErrorToFile(`目标模型 ${targetModel.id} 返回 ${response.status}`);
+        asyncLogError(`目标模型 ${targetModel.id} 返回 ${response.status}`, "hook");
         if (qualityCollector) {
           qualityCollector.recordSignal(targetModel.id, result.analysis.stepType, "error", result.sessionId);
           onlineLearner?.recordSignal(targetModel.id, result.analysis.stepType, "error");
@@ -197,30 +179,19 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
       }
 
       // ISSUE-009: strip apiKey from onRouting callback to prevent accidental leakage
-      const { apiKey: _apiKey, enterpriseConfig: _ec, ...safeDecision } = result.decision;
+      const safeDecision = sanitizeDecisionForCallback(result.decision);
       options.onRouting?.({ ...result, decision: safeDecision } as HandleResult);
 
       // ISSUE-028: Protocol conversion — convert response when crossing providers
-      // When same-provider routing (URL not rewritten), infer protocol from original URL
-      // because the response format matches the original endpoint, not the target model's registered protocol
       const protocol = result.decision.providerSwitched
         ? targetModel.api.protocol
-        : detectProtocolFromUrl(url);
+        : detectProtocol(url);
 
       // Streaming response: wrap with optional SSE protocol converter
       if (response.body && isStreamingResponse(response)) {
-        let sseConverter: SSEProtocolConverter | undefined;
-        if (needsProtocolConversion && sourceProtocol) {
-          // ISSU-028 fix: response comes FROM target endpoint (protocol), must convert TO sourceProtocol
-          if (sourceProtocol === "anthropic" && protocol === "openai") {
-            // Response from OpenAI endpoint → convert to Anthropic SSE for original caller
-            const sseConv = createSSEStreamConverter();
-            sseConverter = (chunk: string) => sseConv.convert(chunk, body.model ?? "");
-          } else if (sourceProtocol === "openai" && protocol === "anthropic") {
-            // Response from Anthropic endpoint → convert to OpenAI SSE for original caller
-            sseConverter = (chunk: string) => convertAnthropicSSEToOpenAI(chunk, body.model ?? "");
-          }
-        }
+        const sseConverter = (needsProtocolConversion && sourceProtocol)
+          ? createSSEConverterForDirection(sourceProtocol, protocol, body.model ?? "")
+          : undefined;
 
         return createStreamingResponseWrapper(response, protocol, (tokens) => {
           if (options.costTracker) {
@@ -238,9 +209,6 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
             qualityCollector.recordSignal(targetModel.id, result.analysis.stepType, "success", result.sessionId);
             onlineLearner?.recordSignal(targetModel.id, result.analysis.stepType, "success");
           }
-          // ISSUE-009: strip apiKey from onRouting callback
-          const { apiKey: _ak, enterpriseConfig: _aec, ...safeDec } = result.decision;
-          options.onRouting?.({ ...result, decision: safeDec, tokenUsage: tokens } as any);
         }, sseConverter);
       }
 
@@ -249,12 +217,9 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
         try {
           const respBody = await response.json();
           let converted: any;
-          // ISSUE-028 fix: response comes FROM target endpoint (protocol), must convert TO sourceProtocol
           if (sourceProtocol === "anthropic" && protocol === "openai") {
-            // Response from OpenAI endpoint → convert to Anthropic format for original caller
             converted = convertOpenAIToAnthropicResponse(respBody, body.model ?? "");
           } else if (sourceProtocol === "openai" && protocol === "anthropic") {
-            // Response from Anthropic endpoint → convert to OpenAI format for original caller
             converted = convertAnthropicToOpenAIResponse(respBody, body.model ?? "");
           }
           if (converted) {
@@ -264,13 +229,13 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
             });
           }
         } catch (conversionErr) {
-          logErrorToFile(`协议转换响应体失败: ${conversionErr}`);
+          asyncLogError(`协议转换响应体失败: ${conversionErr}`, "hook");
         }
       }
 
       return response;
     } catch (err) {
-      logErrorToFile(err);
+      asyncLogError(err, "hook");
       options.onError?.(err);
       return originalFetch.call(this, input, init);
     }
@@ -284,61 +249,6 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
 function isStreamingResponse(response: Response): boolean {
   const ct = response.headers.get("content-type") ?? "";
   return ct.includes("text/event-stream");
-}
-
-function detectProtocolFromUrl(url: string): "openai" | "anthropic" {
-  if (url.includes("anthropic.com") || url.includes("/api/anthropic/")) {
-    return "anthropic";
-  }
-  return "openai";
-}
-
-/**
- * Lookup a model by ID, trying multiple strategies:
- * 1. Exact match on registry id (e.g. "anthropic/claude-sonnet-4-6")
- * 2. Exact match on api.modelId (e.g. "claude-sonnet-4-6")
- * 3. Strip Anthropic date suffix (e.g. "claude-sonnet-4-20250514" → "claude-sonnet-4")
- *    then match by prefix (finds "claude-sonnet-4-6")
- */
-function lookupModel(registry: ModelRegistry, modelId: string): ModelEntry | undefined {
-  // 1. Exact match on id
-  const exact = registry.get(modelId);
-  if (exact) return exact;
-
-  const all = registry.getAll();
-
-  // 2. Exact match on api.modelId
-  const byApiId = all.find(m => m.api.modelId === modelId);
-  if (byApiId) return byApiId;
-
-  // 3. Strip date suffix (-YYYYMMDD) and match by prefix
-  const stripped = modelId.replace(/-\d{8}$/, "");
-  if (stripped !== modelId) {
-    // "claude-sonnet-4" → match "claude-sonnet-4-6" (prefix + dash + version)
-    const byPrefix = all.find(m =>
-      m.api.modelId === stripped || m.api.modelId.startsWith(stripped + "-"),
-    );
-    if (byPrefix) return byPrefix;
-  }
-
-  return undefined;
-}
-
-const PASS_THROUGH_ANALYSIS: StepAnalysis = {
-  stepType: "unknown",
-  difficulty: 0.5,
-  confidence: 0.3,
-  recommendedTier: "standard",
-  recommendedModel: "",
-  reasoning: "pass-through (no reroute)",
-  needsProviderSwitch: false,
-  estimatedTokens: { input: 0, output: 0 },
-  alternatives: [],
-};
-
-let passThroughCounter = 0;
-function generatePassThroughId(): string {
-  return `pt-${Date.now()}-${++passThroughCounter}`;
 }
 
 export function getOriginalFetch(): typeof globalThis.fetch {

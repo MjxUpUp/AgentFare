@@ -17,23 +17,17 @@ import type { RequestHandler, HandleResult } from "@agentfare/hook/request-handl
 import type { CostTracker, QualitySignalCollector } from "@agentfare/core";
 import type { ModelRegistry, ModelEntry } from "@agentfare/models";
 import {
-  convertOpenAIToAnthropicRequest,
-} from "@agentfare/hook/protocol/openai-to-anthropic";
-import {
-  convertAnthropicToOpenAIRequest,
-} from "@agentfare/hook/protocol/anthropic-to-openai-request";
-import {
-  convertOpenAIToAnthropicResponse,
-} from "@agentfare/hook/protocol/openai-to-anthropic-response";
-import {
-  convertAnthropicToOpenAIResponse,
-} from "@agentfare/hook/protocol/anthropic-to-openai";
-import {
-  createSSEStreamConverter,
-} from "@agentfare/hook/protocol/openai-to-anthropic-sse";
-import {
-  convertAnthropicSSEToOpenAI,
-} from "@agentfare/hook/protocol/sse-transform";
+  ANALYZER_TIMEOUT_MS,
+  PASS_THROUGH_ANALYSIS,
+  lookupModelEntry,
+  createPassThroughModelEntry,
+  detectProtocol,
+  createSSEConverterForDirection,
+  convertRequestBody,
+  sanitizeDecisionForCallback,
+  asyncLogError,
+  generatePassThroughId,
+} from "@agentfare/hook/pipeline";
 import type { SSEProtocolConverter } from "@agentfare/hook/response-handler";
 
 export interface ProxyServerDeps {
@@ -61,7 +55,6 @@ export interface ProxyServerOptions {
   resolveUpstream?: (targetUrl: string) => string;
 }
 
-const ANALYZER_TIMEOUT_MS = 500;
 const UPSTREAM_TIMEOUT_MS = 120_000;
 
 /**
@@ -74,7 +67,7 @@ export function createProxyServer(options: ProxyServerOptions): nodeHttp.Server 
     try {
       await handleRequest(req, res, options);
     } catch (err) {
-      logError(err);
+      asyncLogError(err, "proxy");
       onError?.(err);
       if (!res.headersSent) {
         res.writeHead(502, { "Content-Type": "application/json" });
@@ -199,25 +192,9 @@ async function handleRequest(
         targetHeaders = { ...headers };
       }
 
-      // Convert request body if protocol changes
+      // Convert request body if protocol changes (using shared pipeline)
       if (needsProtocolConversion) {
-        try {
-          const requestBody = JSON.parse(result.modifiedBody);
-          let converted: any;
-          if (sourceProtocol === "openai" && targetProtocol === "anthropic") {
-            converted = convertOpenAIToAnthropicRequest(requestBody, targetApi.modelId);
-          } else if (sourceProtocol === "anthropic" && targetProtocol === "openai") {
-            converted = convertAnthropicToOpenAIRequest(requestBody, targetApi.modelId);
-          }
-          if (converted) {
-            targetBodyStr = JSON.stringify(converted);
-          } else {
-            targetBodyStr = result.modifiedBody;
-          }
-        } catch (conversionErr) {
-          logError(`协议转换请求体失败: ${conversionErr}`);
-          targetBodyStr = result.modifiedBody;
-        }
+        targetBodyStr = convertRequestBody(sourceProtocol, targetProtocol, result.modifiedBody, targetApi.modelId);
       } else {
         targetBodyStr = result.modifiedBody;
       }
@@ -234,7 +211,7 @@ async function handleRequest(
     targetHeaders = { ...headers };
 
     // Resolve API key for original provider if not in headers
-    if (!extractKeyFromHeaders(targetHeaders)) {
+    if (!resolveApiKey(providerInfo.provider, targetHeaders)) {
       const key = resolveApiKey(providerInfo.provider, headers);
       if (key) {
         targetHeaders = { ...targetHeaders, ...buildAuthHeaders(providerInfo.provider, key, providerInfo.protocol) };
@@ -251,7 +228,7 @@ async function handleRequest(
 
   // --- Handle 5xx fallback ---
   if (upstreamRes.statusCode && upstreamRes.statusCode >= 500 && result?.decision.targetModel) {
-    logError(`目标模型 ${result.decision.targetModel.id} 返回 ${upstreamRes.statusCode}`);
+    asyncLogError(`目标模型 ${result.decision.targetModel.id} 返回 ${upstreamRes.statusCode}`, "proxy");
     if (options.deps.qualitySignalCollector) {
       options.deps.qualitySignalCollector.recordSignal(
         result.decision.targetModel.id,
@@ -263,7 +240,7 @@ async function handleRequest(
     // Fallback to original request
     upstreamRes.resume(); // drain
     const fallbackRes = await forwardRequest(virtualUrl, bodyStr, headers, options.resolveUpstream);
-    pipeResponse(fallbackRes, res, providerInfo.protocol, isStreaming, originalModel, undefined, options, result);
+    pipeResponse(fallbackRes, res, targetProtocol, isStreaming, originalModel, undefined, options, result, sourceProtocol, targetProtocol);
     return;
   }
 
@@ -283,23 +260,14 @@ async function handleRequest(
 
   // --- Fire onRouting callback (strip sensitive fields) ---
   if (result?.decision) {
-    const { apiKey: _apiKey, enterpriseConfig: _ec, ...safeDecision } = result.decision;
+    const safeDecision = sanitizeDecisionForCallback(result.decision);
     options.onRouting?.({ ...result, decision: safeDecision } as HandleResult);
   }
 
   // --- Determine SSE converter for cross-provider streaming ---
-  let sseConverter: SSEProtocolConverter | undefined;
-  if (needsProtocolConversion && result?.decision.targetModel) {
-    // Response comes FROM upstream (targetProtocol), needs converting TO client (sourceProtocol)
-    if (sourceProtocol === "anthropic" && targetProtocol === "openai") {
-      // Upstream sends OpenAI SSE → convert to Anthropic SSE for client
-      const sseConv = createSSEStreamConverter();
-      sseConverter = (chunk: string) => sseConv.convert(chunk, originalModel);
-    } else if (sourceProtocol === "openai" && targetProtocol === "anthropic") {
-      // Upstream sends Anthropic SSE → convert to OpenAI SSE for client
-      sseConverter = (chunk: string) => convertAnthropicSSEToOpenAI(chunk, originalModel);
-    }
-  }
+  const sseConverter = (needsProtocolConversion && result?.decision.targetModel)
+    ? createSSEConverterForDirection(sourceProtocol, targetProtocol, originalModel)
+    : undefined;
 
   // --- Pipe response back to client ---
   pipeResponse(
@@ -309,6 +277,8 @@ async function handleRequest(
     sseConverter,
     options,
     result,
+    sourceProtocol,
+    targetProtocol,
   );
 }
 
@@ -325,6 +295,8 @@ function pipeResponse(
   sseConverter: SSEProtocolConverter | undefined,
   options: ProxyServerOptions,
   result: HandleResult | null,
+  sourceProtocol?: "openai" | "anthropic",
+  targetProtocol?: "openai" | "anthropic",
 ): void {
   // Forward status code and headers
   const statusCode = upstreamRes.statusCode ?? 200;
@@ -376,7 +348,7 @@ function pipeResponse(
     const chunks: Buffer[] = [];
     upstreamRes.on("data", (chunk: Buffer) => chunks.push(chunk));
     upstreamRes.on("end", () => {
-      const fullBody = Buffer.concat(chunks).toString("utf-8");
+      let fullBody = Buffer.concat(chunks).toString("utf-8");
 
       // Extract tokens from non-streaming response
       try {
@@ -402,11 +374,25 @@ function pipeResponse(
         }
       } catch { /* ignore */ }
 
-      // Non-streaming protocol conversion
-      if (sseConverter) {
-        // Non-streaming conversion already happened at request level
-        // For response, we need to convert the full response body
-        // This is handled below
+      // Non-streaming protocol conversion (ISSUE-082: previously unimplemented)
+      if (sseConverter && sourceProtocol && targetProtocol && sourceProtocol !== targetProtocol) {
+        try {
+          const respJson = JSON.parse(fullBody);
+          let converted: any;
+          // Response comes FROM upstream (targetProtocol), needs converting TO client (sourceProtocol)
+          if (sourceProtocol === "anthropic" && targetProtocol === "openai") {
+            const { convertOpenAIToAnthropicResponse } = require("@agentfare/hook/protocol/openai-to-anthropic-response") as typeof import("@agentfare/hook/protocol/openai-to-anthropic-response");
+            converted = convertOpenAIToAnthropicResponse(respJson, originalModel);
+          } else if (sourceProtocol === "openai" && targetProtocol === "anthropic") {
+            const { convertAnthropicToOpenAIResponse } = require("@agentfare/hook/protocol/anthropic-to-openai") as typeof import("@agentfare/hook/protocol/anthropic-to-openai");
+            converted = convertAnthropicToOpenAIResponse(respJson, originalModel);
+          }
+          if (converted) {
+            fullBody = JSON.stringify(converted);
+          }
+        } catch (conversionErr) {
+          asyncLogError(`非流式协议转换失败: ${conversionErr}`, "proxy");
+        }
       }
 
       res.end(fullBody);
@@ -445,7 +431,7 @@ function forwardRequest(
       resolve(upstreamRes);
     });
 
-    upstreamReq.setTimeout(120000, () => {
+    upstreamReq.setTimeout(UPSTREAM_TIMEOUT_MS, () => {
       upstreamReq.destroy(new Error("upstream timeout"));
     });
 
@@ -483,35 +469,6 @@ function extractNodeHeaders(req: nodeHttp.IncomingMessage): Record<string, strin
 }
 
 /**
- * Extract API key from headers (client-provided).
- */
-function extractKeyFromHeaders(headers: Record<string, string>): string | undefined {
-  const apiKey = headers["x-api-key"];
-  if (apiKey) return apiKey;
-  const auth = headers["authorization"];
-  if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
-  return undefined;
-}
-
-/**
- * Log error to ~/.agentfare/errors.log
- */
-function logError(err: unknown): void {
-  try {
-    const fs = require("node:fs") as typeof import("node:fs");
-    const path = require("node:path") as typeof import("node:path");
-    const os = require("node:os") as typeof import("node:os");
-    const logPath = path.join(os.homedir(), ".agentfare", "errors.log");
-    const timestamp = new Date().toISOString();
-    const message = err instanceof Error ? err.stack ?? err.message : String(err);
-    fs.appendFileSync(logPath, `[${timestamp}] [proxy] ${message}\n`);
-  } catch { /* best effort */ }
-}
-
-/** Auto-incrementing counter for pass-through session IDs */
-let passThroughCounter = 0;
-
-/**
  * Record cost for pass-through requests (no model reroute).
  * Uses the registry to look up real pricing for accurate cost tracking.
  */
@@ -522,27 +479,9 @@ function recordPassThroughCost(
 ): void {
   if (!options.deps.costTracker) return;
 
-  // Try to find real model entry from registry for accurate pricing
   const registry = options.deps.registry;
-  let modelEntry;
-  if (registry) {
-    modelEntry = registry.get(originalModel);
-    const all = registry.getAll();
-    if (!modelEntry) {
-      modelEntry = all.find(m => m.api.modelId === originalModel);
-    }
-    if (!modelEntry) {
-      // Strip date suffix (e.g. "claude-sonnet-4-20250514" → "claude-sonnet-4")
-      const stripped = originalModel.replace(/-\d{8}$/, "");
-      if (stripped !== originalModel) {
-        modelEntry = all.find(m =>
-          m.api.modelId === stripped || m.api.modelId.startsWith(stripped + "-"),
-        );
-      }
-    }
-  }
-
-  const targetEntry = modelEntry ?? PASS_THROUGH_MODEL_ENTRY(originalModel);
+  const modelEntry = registry ? lookupModelEntry(registry, originalModel) : undefined;
+  const targetEntry = modelEntry ?? createPassThroughModelEntry(originalModel);
 
   if (!modelEntry) {
     console.warn(`[agentfare] pass-through cost tracking: model "${originalModel}" not in registry, pricing unavailable`);
@@ -553,41 +492,8 @@ function recordPassThroughCost(
     originalModel,
     modelEntry,
     targetEntry,
-    `pt-${Date.now()}-${++passThroughCounter}`,
+    generatePassThroughId(),
     "unknown",
     tokens,
   );
-}
-
-/** Synthetic StepAnalysis for pass-through requests */
-const PASS_THROUGH_ANALYSIS = {
-  stepType: "unknown" as const,
-  difficulty: 0.5,
-  confidence: 0.3,
-  recommendedTier: "standard" as const,
-  recommendedModel: "",
-  reasoning: "pass-through (no reroute)",
-  needsProviderSwitch: false,
-  estimatedTokens: { input: 0, output: 0 },
-  alternatives: [],
-};
-
-/**
- * Create a synthetic ModelEntry for pass-through cost tracking.
- * Uses zero pricing as fallback when model is not in registry.
- */
-function PASS_THROUGH_MODEL_ENTRY(modelId: string): ModelEntry {
-  return {
-    id: modelId,
-    displayName: modelId,
-    provider: "custom" as const,
-    tier: "standard" as const,
-    api: { baseUrl: "", protocol: "openai" as const, modelId },
-    pricing: { inputPerMillion: 0, outputPerMillion: 0, cacheHitPerMillion: null, currency: "USD" as const },
-    capabilities: {
-      codeGeneration: 0, codeReview: 0, planning: 0, reasoning: 0, toolUse: 0,
-      contextWindow: 0, maxOutputTokens: 0, streaming: true, jsonMode: false,
-    },
-    routing: { avgLatencyMs: 0, tokensPerSecond: 0, availability: 1, region: ["global"] },
-  };
 }

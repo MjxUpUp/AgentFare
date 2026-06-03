@@ -12,6 +12,7 @@ export default defineConfig({
       "@agentfare/core": pkgs("core"),
       "@agentfare/models": pkgs("models"),
       "@agentfare/hook/fetch-patch": path.resolve(__dirname, "packages/hook/dist/fetch-patch.js"),
+      "@agentfare/hook/pipeline": path.resolve(__dirname, "packages/hook/dist/pipeline.js"),
       "@agentfare/hook/request-handler": path.resolve(__dirname, "packages/hook/dist/request-handler.js"),
       "@agentfare/hook/reentry-guard": path.resolve(__dirname, "packages/hook/dist/reentry-guard.js"),
       "@agentfare/hook/protocol/openai-to-anthropic": path.resolve(__dirname, "packages/hook/dist/protocol/openai-to-anthropic.js"),

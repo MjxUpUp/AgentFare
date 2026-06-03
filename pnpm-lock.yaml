@@ -91,15 +91,6 @@ importers:
         specifier: ^3.2
         version: 3.2.4(@types/node@22.19.19)
 
-  packages/langchain:
-    devDependencies:
-      typescript:
-        specifier: ^5.8
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2
-        version: 3.2.4(@types/node@25.9.1)
-
   packages/loader:
     dependencies:
       '@agentfare/hook':

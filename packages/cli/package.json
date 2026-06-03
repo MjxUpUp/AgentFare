@@ -26,12 +26,12 @@
     "preinstall": "node dist/preinstall-stop-proxy.js || exit 0"
   },
   "dependencies": {
-    "@agentfare/core": "^0.1.3",
-    "@agentfare/hook": "^0.1.3",
-    "@agentfare/loader": "^0.1.5",
-    "@agentfare/models": "^0.1.3",
-    "@agentfare/proxy": "^0.1.1",
-    "@agentfare/setup": "^0.1.6",
+    "@agentfare/core": "workspace:*",
+    "@agentfare/hook": "workspace:*",
+    "@agentfare/loader": "workspace:*",
+    "@agentfare/models": "workspace:*",
+    "@agentfare/proxy": "workspace:*",
+    "@agentfare/setup": "workspace:*",
     "commander": "^13.0.0"
   },
   "devDependencies": {

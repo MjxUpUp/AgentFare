@@ -22,7 +22,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentfare/models": "^0.1.3"
+    "@agentfare/models": "workspace:*"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.0.0"

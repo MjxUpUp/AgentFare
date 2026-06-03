@@ -22,7 +22,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentfare/hook": "^0.1.3"
+    "@agentfare/hook": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
