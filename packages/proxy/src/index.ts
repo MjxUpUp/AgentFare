@@ -35,7 +35,6 @@ export {
 } from "./key-store.js";
 export {
   SSEPipe,
-  createTokenExtractPipe,
   type StreamTokenData,
 } from "./sse-pipe.js";
 export {

@@ -25,6 +25,8 @@ export type { StreamTokenData };
  */
 export class SSEPipe extends Transform {
   private buffer = "";
+  /** ISSUE-083: Accumulated tokens — onTokens called once in _flush */
+  private accumulatedTokens: StreamTokenData = { input: 0, output: 0 };
 
   constructor(
     private protocol: "openai" | "anthropic",
@@ -49,13 +51,16 @@ export class SSEPipe extends Transform {
     for (const part of parts) {
       if (!part.trim()) continue;
 
-      // Extract tokens from the original (pre-conversion) text
+      // ISSUE-083: Accumulate tokens instead of calling onTokens per event.
+      // Anthropic splits usage across message_start (input) and message_delta (output),
+      // causing double cost records. Accumulate and fire once in _flush.
       const extractor = this.protocol === "openai"
         ? extractTokenUsageOpenAI
         : extractTokenUsageAnthropic;
       const tokenData = extractor(part + "\n\n");
       if (tokenData) {
-        this.onTokens(tokenData);
+        this.accumulatedTokens.input += tokenData.input;
+        this.accumulatedTokens.output += tokenData.output;
       }
 
       // Apply protocol conversion if needed
@@ -88,18 +93,31 @@ export class SSEPipe extends Transform {
         : extractTokenUsageAnthropic;
       const tokenData = extractor(this.buffer + "\n\n");
       if (tokenData) {
-        this.onTokens(tokenData);
+        this.accumulatedTokens.input += tokenData.input;
+        this.accumulatedTokens.output += tokenData.output;
       }
 
       if (this.protocolConverter) {
         const converted = this.protocolConverter(this.buffer);
         if (converted) {
+          // ISSUE-083: Fire accumulated tokens before ending
+          if (this.accumulatedTokens.input > 0 || this.accumulatedTokens.output > 0) {
+            this.onTokens(this.accumulatedTokens);
+          }
           callback(null, Buffer.from(converted, "utf-8"));
           return;
         }
       }
+      // ISSUE-083: Fire accumulated tokens before ending
+      if (this.accumulatedTokens.input > 0 || this.accumulatedTokens.output > 0) {
+        this.onTokens(this.accumulatedTokens);
+      }
       callback(null, Buffer.from(this.buffer, "utf-8"));
     } else {
+      // ISSUE-083: Fire accumulated tokens even if no trailing buffer
+      if (this.accumulatedTokens.input > 0 || this.accumulatedTokens.output > 0) {
+        this.onTokens(this.accumulatedTokens);
+      }
       callback();
     }
   }
@@ -113,35 +131,4 @@ export function createTokenExtractPipe(
   onTokens: (tokens: StreamTokenData) => void,
 ): SSEPipe {
   return new SSEPipe(protocol, onTokens);
-}
-
-/**
- * Create an SSE pipe that converts protocol and extracts tokens.
- */
-export function createConvertingPipe(
-  sourceProtocol: "openai" | "anthropic",
-  targetProtocol: "openai" | "anthropic",
-  onTokens: (tokens: StreamTokenData) => void,
-  originalModel: string,
-): SSEPipe {
-  // Import converters lazily to avoid circular deps at module level
-  // The pipe uses the upstream protocol for extraction,
-  // and converts from upstream protocol to client protocol.
-  // sourceProtocol = what the client expects
-  // targetProtocol (renamed: upstream protocol) = what the upstream sends
-  let converter: SSEProtocolConverter | undefined;
-
-  // The response comes FROM the target/upstream provider (targetProtocol),
-  // and needs to be converted TO what the client expects (sourceProtocol).
-  // But our protocolConverter receives the raw upstream chunk.
-  // So: if upstream is openai and client expects anthropic → convert OpenAI SSE → Anthropic SSE
-  //     if upstream is anthropic and client expects openai → convert Anthropic SSE → OpenAI SSE
-
-  // The SSEPipe's `protocol` field indicates what format the UPSTREAM sends
-  // (used for token extraction). So protocol = targetProtocol.
-  // But we also need to handle the conversion direction correctly.
-
-  // For now, return a pipe with the right protocol for token extraction.
-  // The caller sets up the converter function externally and passes it in.
-  return new SSEPipe(targetProtocol, onTokens, converter);
 }
