@@ -41,9 +41,19 @@ async function main(): Promise<void> {
     try { db.close(); } catch {}
   });
 
+  process.on("SIGTERM", () => {
+    try { db.close(); } catch {}
+    process.exit(0);
+  });
+
+  process.on("SIGINT", () => {
+    try { db.close(); } catch {}
+    process.exit(0);
+  });
+
   const result = await startProxy({
     port,
-    deps: { handler, costTracker, qualitySignalCollector },
+    deps: { handler, costTracker, qualitySignalCollector, registry },
   });
 
   if (!result.success) {

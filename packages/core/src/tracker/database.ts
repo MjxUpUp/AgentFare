@@ -254,6 +254,55 @@ export class TrackingDatabase {
   close(): void {
     this.db.close();
   }
+
+  /** Load all model scores from the model_scores table. */
+  loadAllModelScores(): Array<{
+    model: string;
+    stepType: string;
+    avgAccuracy: number;
+    avgLatencyMs: number;
+    avgCostPerTask: number;
+    sampleCount: number;
+  }> {
+    return (this.db
+      .prepare("SELECT model, step_type, avg_accuracy, avg_latency_ms, avg_cost_per_task, sample_count FROM model_scores")
+      .all() as Array<{ model: string; step_type: string; avg_accuracy: number; avg_latency_ms: number; avg_cost_per_task: number; sample_count: number }>)
+      .map((row) => ({
+        model: row.model,
+        stepType: row.step_type,
+        avgAccuracy: row.avg_accuracy,
+        avgLatencyMs: row.avg_latency_ms,
+        avgCostPerTask: row.avg_cost_per_task,
+        sampleCount: row.sample_count,
+      }));
+  }
+
+  /** Upsert a batch of model scores within a transaction. */
+  upsertModelScores(scores: Array<{
+    model: string;
+    stepType: string;
+    avgAccuracy: number;
+    avgLatencyMs: number;
+    avgCostPerTask: number;
+    sampleCount: number;
+  }>): void {
+    const upsert = this.db.prepare(`
+      INSERT INTO model_scores (model, step_type, avg_accuracy, avg_latency_ms, avg_cost_per_task, sample_count, last_updated)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(model, step_type) DO UPDATE SET
+        avg_accuracy = excluded.avg_accuracy,
+        avg_latency_ms = excluded.avg_latency_ms,
+        avg_cost_per_task = excluded.avg_cost_per_task,
+        sample_count = excluded.sample_count,
+        last_updated = datetime('now')
+    `);
+    const batch = this.db.transaction((items: typeof scores) => {
+      for (const s of items) {
+        upsert.run(s.model, s.stepType, s.avgAccuracy, s.avgLatencyMs, s.avgCostPerTask, s.sampleCount);
+      }
+    });
+    batch(scores);
+  }
 }
 
 function parseTimeRange(range: string): string {

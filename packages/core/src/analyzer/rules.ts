@@ -40,6 +40,32 @@ const COMPLEX_KEYWORDS = [
   /\b(multi[\s-]file|cross[\s-]module|system[\s-]wide|end[\s-]to[\s-]end)\b/i,
 ];
 
+const PLANNING_PATTERNS = [
+  /\b(plan|roadmap|strategy|approach|break\s+down|step[\s-]by[\s-]step|how\s+should\s+we|what's\s+the\s+plan)\b.*\b(project|feature|task|migration|refactor)\b/i,
+  /\b(create|write|draft)\s+(a\s+)?(plan|roadmap|strategy|design\s+doc|spec)\b/i,
+  /\b(before\s+we\s+start|let's\s+plan|plan\s+out|think\s+through)\b/i,
+];
+
+const TESTING_PATTERNS = [
+  /\b(write|add|create|run|generate)\s+.*(test|spec|snapshot|e2e|integration\s+test)\b/i,
+  /\b(test|spec|jest|mocha|vitest|pytest|unittest)\s+(for|of|that|it|case|suite)\b/i,
+  /\b(unit\s+test|integration\s+test|e2e\s+test|test\s+coverage|regression\s+test)\b/i,
+  /\b(assert|expect|should|verify|validate)\s+.*\b(works?|returns?|throws?|matches?)\b/i,
+];
+
+const REVIEWING_PATTERNS = [
+  /\b(review|audit|inspect|check|analyze)\s+.*\b(code|pr|pull\s+request|changes?|diff|commit)\b/i,
+  /\b(code\s+review|pr\s+review|security\s+review|look\s+over)\b/i,
+  /\b(any\s+issues?|anything\s+wrong|any\s+bugs?|spot\s+(any|the))\s+.*\b(problem|issue|bug|error)\b/i,
+  /\b(what\s+do\s+you\s+think|looks?\s+(good|correct|right)|feedback)\b.*\b(code|changes?|implementation)\b/i,
+];
+
+const REASONING_PATTERNS = [
+  /\b(why|explain|reason|analyze|compare|evaluate|assess|weigh)\b.*\b(approach|option|alternative|solution|performance|architecture|design|pattern|decision|trade[\s-]?off|pros?\s+and\s+cons?|advantage|disadvantage|better|worse|best)\b/i,
+  /\b(how\s+does|what\s+(is|are)\s+the\s+difference|which\s+(is|approach|method)\s+(is\s+)?(better|best|worse))\b/i,
+  /\b(trade[\s-]?off|pros?\s+and\s+cons?|advantage|disadvantage|justify|rationale)\b.*\b(option|approach|alternative|solution|design|pattern|decision|choice)\b/i,
+];
+
 export function analyzeStepRules(request: StepAnalysisRequest): StepAnalysis | null {
   const { messages } = request;
   const lastUserMsg =
@@ -232,6 +258,100 @@ export function analyzeStepRules(request: StepAnalysisRequest): StepAnalysis | n
           tier: "powerful",
           costSavingsVsRecommended: -1.5,
           qualityRisk: "low",
+        },
+      ],
+    };
+  }
+
+  // Rule: planning
+  if (isMatch(userText, PLANNING_PATTERNS)) {
+    return {
+      stepType: "planning",
+      difficulty: 0.6,
+      confidence: 0.8,
+      recommendedTier: "powerful",
+      recommendedModel: "",
+      reasoning: "规划/设计任务，需要高推理能力",
+      needsProviderSwitch: false,
+      estimatedTokens,
+      alternatives: [
+        {
+          model: "",
+          tier: "standard",
+          costSavingsVsRecommended: 0.4,
+          qualityRisk: "medium",
+        },
+      ],
+    };
+  }
+
+  // Rule: testing
+  if (isMatch(userText, TESTING_PATTERNS)) {
+    return {
+      stepType: "testing",
+      difficulty: 0.4,
+      confidence: 0.8,
+      recommendedTier: "standard",
+      recommendedModel: "",
+      reasoning: "测试编写/运行任务",
+      needsProviderSwitch: false,
+      estimatedTokens,
+      alternatives: [
+        {
+          model: "",
+          tier: "fast",
+          costSavingsVsRecommended: 0.5,
+          qualityRisk: "low",
+        },
+        {
+          model: "",
+          tier: "powerful",
+          costSavingsVsRecommended: -1.0,
+          qualityRisk: "none",
+        },
+      ],
+    };
+  }
+
+  // Rule: reviewing
+  if (isMatch(userText, REVIEWING_PATTERNS)) {
+    return {
+      stepType: "reviewing",
+      difficulty: 0.5,
+      confidence: 0.8,
+      recommendedTier: "powerful",
+      recommendedModel: "",
+      reasoning: "代码审查/分析任务，需要高准确性",
+      needsProviderSwitch: false,
+      estimatedTokens,
+      alternatives: [
+        {
+          model: "",
+          tier: "standard",
+          costSavingsVsRecommended: 0.3,
+          qualityRisk: "medium",
+        },
+      ],
+    };
+  }
+
+  // Rule: reasoning (complex analysis, comparisons, trade-offs)
+  if (isMatch(userText, REASONING_PATTERNS)) {
+    return {
+      stepType: "reasoning",
+      difficulty: 0.6,
+      confidence: 0.75,
+      recommendedTier: "powerful",
+      recommendedModel: "",
+      reasoning: "推理/分析任务，需要深度理解",
+      needsProviderSwitch: false,
+      estimatedTokens,
+      alternatives: [
+        {
+          model: "",
+          tier: "standard",
+          costSavingsVsRecommended: 0.3,
+          qualityRisk: "medium",
         },
       ],
     };

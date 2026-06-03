@@ -57,7 +57,8 @@ export async function analyzeWithLLM(
     const json = JSON.parse(extractJSON(content));
 
     const estimatedTokens = estimateTokensFromMessages(messages);
-    const recommendedTier = json.recommendedTier ?? "standard";
+    const validTiers = ["fast", "standard", "powerful"] as const;
+    const recommendedTier = validTiers.includes(json.recommendedTier) ? json.recommendedTier : "standard";
     const alternatives = buildAlternatives(recommendedTier);
 
     return {
@@ -72,7 +73,8 @@ export async function analyzeWithLLM(
       estimatedTokens,
       alternatives,
     };
-  } catch {
+  } catch (err) {
+    console.warn("[agentfare] LLM analyzer failed:", err instanceof Error ? err.message : err);
     return null;
   }
 }

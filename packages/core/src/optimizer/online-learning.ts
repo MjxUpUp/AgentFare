@@ -135,43 +135,30 @@ export class OnlineLearner {
 
   private loadScoresFromDB(): void {
     try {
-      const rows = (this.db as any).db
-        .prepare("SELECT model, step_type, avg_accuracy, avg_latency_ms, avg_cost_per_task, sample_count FROM model_scores")
-        .all() as Array<{ model: string; step_type: string; avg_accuracy: number; avg_latency_ms: number; avg_cost_per_task: number; sample_count: number }>;
+      const rows = this.db.loadAllModelScores();
       for (const row of rows) {
-        const key = `${row.model}::${row.step_type}`;
+        const key = `${row.model}::${row.stepType}`;
         this.modelScores.set(key, {
           model: row.model,
-          stepType: row.step_type,
-          avgAccuracy: row.avg_accuracy,
-          avgLatencyMs: row.avg_latency_ms,
-          avgCostPerTask: row.avg_cost_per_task,
-          sampleCount: row.sample_count,
+          stepType: row.stepType,
+          avgAccuracy: row.avgAccuracy,
+          avgLatencyMs: row.avgLatencyMs,
+          avgCostPerTask: row.avgCostPerTask,
+          sampleCount: row.sampleCount,
         });
       }
-    } catch {}
+    } catch (err) {
+      console.warn("[agentfare] Failed to load scores from DB:", err instanceof Error ? err.message : err);
+    }
   }
 
   persistToDB(): void {
     if (!this.dirty) return;
     try {
-      const upsert = (this.db as any).db.prepare(`
-        INSERT INTO model_scores (model, step_type, avg_accuracy, avg_latency_ms, avg_cost_per_task, sample_count, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(model, step_type) DO UPDATE SET
-          avg_accuracy = excluded.avg_accuracy,
-          avg_latency_ms = excluded.avg_latency_ms,
-          avg_cost_per_task = excluded.avg_cost_per_task,
-          sample_count = excluded.sample_count,
-          last_updated = datetime('now')
-      `);
-      const batch = (this.db as any).db.transaction((scores: ModelScore[]) => {
-        for (const s of scores) {
-          upsert.run(s.model, s.stepType, s.avgAccuracy, s.avgLatencyMs, s.avgCostPerTask, s.sampleCount);
-        }
-      });
-      batch(Array.from(this.modelScores.values()));
+      this.db.upsertModelScores(Array.from(this.modelScores.values()));
       this.dirty = false;
-    } catch {}
+    } catch (err) {
+      console.warn("[agentfare] Failed to persist scores to DB:", err instanceof Error ? err.message : err);
+    }
   }
 }

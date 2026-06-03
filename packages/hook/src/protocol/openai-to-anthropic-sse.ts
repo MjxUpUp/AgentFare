@@ -16,15 +16,36 @@
  *   event: message_stop         data: {"type":"message_stop"}
  */
 
-let state: "idle" | "started" | "text_block_started" = "idle";
-let msgId = "";
+// ── Stateful core (per-instance state, safe for concurrent streams) ──────
 
-export function resetSSEState(): void {
-  state = "idle";
-  msgId = "";
+export interface SSEStreamConverter {
+  convert(sseChunk: string, model: string): string | null;
+  reset(): void;
 }
 
-export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): string | null {
+export function createSSEStreamConverter(): SSEStreamConverter {
+  let state: "idle" | "started" | "text_block_started" = "idle";
+  let msgId = "";
+
+  return {
+    reset() {
+      state = "idle";
+      msgId = "";
+    },
+    convert(sseChunk: string, model: string): string | null {
+      return convertChunk(sseChunk, model, () => state, (s) => { state = s; }, () => msgId, (id) => { msgId = id; });
+    },
+  };
+}
+
+function convertChunk(
+  sseChunk: string,
+  model: string,
+  getState: () => string,
+  setState: (s: "idle" | "started" | "text_block_started") => void,
+  getMsgId: () => string,
+  setMsgId: (id: string) => void,
+): string | null {
   const lines = sseChunk.split("\n");
   const results: string[] = [];
 
@@ -34,7 +55,7 @@ export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): st
 
     if (dataStr === "[DONE]") {
       // Emit content_block_stop, message_delta, message_stop
-      if (state === "text_block_started") {
+      if (getState() === "text_block_started") {
         results.push(formatSSE("content_block_stop", { type: "content_block_stop", index: 0 }));
       }
       results.push(formatSSE("message_delta", {
@@ -43,7 +64,7 @@ export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): st
         usage: { output_tokens: 0 },
       }));
       results.push(formatSSE("message_stop", { type: "message_stop" }));
-      state = "idle";
+      setState("idle");
       continue;
     }
 
@@ -54,12 +75,12 @@ export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): st
     if (!choice) continue;
 
     // First chunk with role -> message_start
-    if (state === "idle" && choice.delta?.role) {
-      msgId = data.id ?? `msg_${Date.now()}`;
+    if (getState() === "idle" && choice.delta?.role) {
+      setMsgId(data.id ?? `msg_${Date.now()}`);
       results.push(formatSSE("message_start", {
         type: "message_start",
         message: {
-          id: msgId,
+          id: getMsgId(),
           type: "message",
           role: "assistant",
           model,
@@ -75,18 +96,18 @@ export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): st
         index: 0,
         content_block: { type: "text", text: "" },
       }));
-      state = "text_block_started";
+      setState("text_block_started");
     }
 
     // Content delta
     if (choice.delta?.content !== undefined && choice.delta.content !== null) {
-      if (state === "idle") {
+      if (getState() === "idle") {
         // Edge case: content arrived before role — start message first
-        msgId = data.id ?? `msg_${Date.now()}`;
+        setMsgId(data.id ?? `msg_${Date.now()}`);
         results.push(formatSSE("message_start", {
           type: "message_start",
           message: {
-            id: msgId,
+            id: getMsgId(),
             type: "message",
             role: "assistant",
             model,
@@ -101,7 +122,7 @@ export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): st
           index: 0,
           content_block: { type: "text", text: "" },
         }));
-        state = "text_block_started";
+        setState("text_block_started");
       }
       results.push(formatSSE("content_block_delta", {
         type: "content_block_delta",
@@ -112,7 +133,7 @@ export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): st
 
     // Finish reason
     if (choice.finish_reason) {
-      if (state === "text_block_started") {
+      if (getState() === "text_block_started") {
         results.push(formatSSE("content_block_stop", { type: "content_block_stop", index: 0 }));
       }
       const stopReason = mapFinishReason(choice.finish_reason);
@@ -122,7 +143,7 @@ export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): st
         usage: { output_tokens: 0 },
       }));
       results.push(formatSSE("message_stop", { type: "message_stop" }));
-      state = "idle";
+      setState("idle");
     }
 
     // Tool calls delta — emit as tool_use content blocks
@@ -142,6 +163,31 @@ export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): st
   }
 
   return results.length > 0 ? results.join("") : null;
+}
+
+// ── Legacy module-level API (deprecated — NOT safe for concurrent streams) ──
+
+let state: "idle" | "started" | "text_block_started" = "idle";
+let msgId = "";
+
+/**
+ * @deprecated Use `createSSEStreamConverter()` instead for concurrency safety.
+ */
+export function resetSSEState(): void {
+  state = "idle";
+  msgId = "";
+}
+
+/**
+ * @deprecated Use `createSSEStreamConverter()` instead for concurrency safety.
+ *             The returned converter's `.convert()` method has the same signature.
+ */
+export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): string | null {
+  return convertChunk(
+    sseChunk, model,
+    () => state, (s) => { state = s; },
+    () => msgId, (id) => { msgId = id; },
+  );
 }
 
 function formatSSE(event: string, data: any): string {

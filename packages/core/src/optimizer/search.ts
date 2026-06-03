@@ -8,6 +8,14 @@ export function bruteForceSearch(
   accuracyFn?: (combo: Record<string, string>) => number,
   config: SearchConfig = DEFAULT_SEARCH_CONFIG,
 ): RankedCombo[] {
+  // Guard against combinatorial explosion — downgrade to hill climbing
+  const total = computeTotalCombinations(pipeline);
+  if (total > 1_000_000) {
+    console.warn(
+      `bruteForceSearch: ${total} combinations exceeds limit of 1,000,000 — downgrading to hillClimbingSearch`,
+    );
+    return hillClimbingSearch(pipeline, costFn, accuracyFn, config);
+  }
   const combos = generateAllCombinations(pipeline);
   const results: RankedCombo[] = combos.map((combo) => ({
     models: combo,

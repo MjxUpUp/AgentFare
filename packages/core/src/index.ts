@@ -14,6 +14,9 @@ export type {
   OnlineLearningConfig,
 } from "./config/types.js";
 
+// === Errors ===
+export { AgentFareError, ConfigError, RoutingError, AnalysisError } from "./errors.js";
+
 // === Task 5: Step Analyzer L1 ===
 export { analyzeStepRules } from "./analyzer/rules.js";
 export { extractTaskFromMessages } from "./analyzer/types.js";

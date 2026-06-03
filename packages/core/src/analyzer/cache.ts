@@ -62,7 +62,9 @@ export class RouteCache {
           }
         }
       }
-    } catch {}
+    } catch (err) {
+      console.warn("[agentfare] Failed to load route cache from disk:", err instanceof Error ? err.message : err);
+    }
   }
 
   saveToDisk(): void {
@@ -73,6 +75,8 @@ export class RouteCache {
       const data = Array.from(this.cache.entries());
       fs.writeFileSync(CACHE_FILE, JSON.stringify(data));
       this.dirty = false;
-    } catch {}
+    } catch (err) {
+      console.warn("[agentfare] Failed to save route cache to disk:", err instanceof Error ? err.message : err);
+    }
   }
 }

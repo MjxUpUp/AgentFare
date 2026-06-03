@@ -4,20 +4,21 @@ import type { RequestHandler, HandleResult } from "./request-handler.js";
 import { createStreamingResponseWrapper } from "./response-handler.js";
 import type { SSEProtocolConverter } from "./response-handler.js";
 import type { CostTracker, QualitySignalCollector, StepAnalysis } from "@agentfare/core";
-import type { ModelRegistry, ModelEntry } from "@agentfare/models";
+import { ModelRegistry } from "@agentfare/models";
+import type { ModelEntry } from "@agentfare/models";
 import { convertOpenAIToAnthropicRequest } from "./protocol/openai-to-anthropic.js";
 import { convertAnthropicToOpenAIResponse } from "./protocol/anthropic-to-openai.js";
 import { convertAnthropicSSEToOpenAI } from "./protocol/sse-transform.js";
 import { convertAnthropicToOpenAIRequest } from "./protocol/anthropic-to-openai-request.js";
 import { convertOpenAIToAnthropicResponse } from "./protocol/openai-to-anthropic-response.js";
-import { convertOpenAISSEToAnthropic, resetSSEState } from "./protocol/openai-to-anthropic-sse.js";
+import { createSSEStreamConverter } from "./protocol/openai-to-anthropic-sse.js";
 
 const ORIGINAL_FETCH_SYMBOL = Symbol("agentfare:originalFetch");
 const ANALYZER_TIMEOUT_MS = 500;
 
 export interface FetchPatchOptions {
   handler: RequestHandler;
-  detector: LLMDetector;
+  detector?: LLMDetector;
   registry?: ModelRegistry;
   costTracker?: CostTracker;
   qualitySignalCollector?: QualitySignalCollector;
@@ -44,6 +45,7 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
 
   const qualityCollector = options.qualitySignalCollector;
   const onlineLearner = options.onlineLearner;
+  const detector = options.detector ?? new LLMDetector(options.registry ?? new ModelRegistry());
 
   globalThis.fetch = async function patchedFetch(
     input: RequestInfo | URL,
@@ -51,7 +53,7 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
   ): Promise<Response> {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
-    if (!options.detector.isLLMApiCall(url)) {
+    if (!detector.isLLMApiCall(url)) {
       return originalFetch.call(this, input, init);
     }
 
@@ -212,8 +214,8 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
           // ISSU-028 fix: response comes FROM target endpoint (protocol), must convert TO sourceProtocol
           if (sourceProtocol === "anthropic" && protocol === "openai") {
             // Response from OpenAI endpoint → convert to Anthropic SSE for original caller
-            resetSSEState();
-            sseConverter = (chunk: string) => convertOpenAISSEToAnthropic(chunk, body.model ?? "");
+            const sseConv = createSSEStreamConverter();
+            sseConverter = (chunk: string) => sseConv.convert(chunk, body.model ?? "");
           } else if (sourceProtocol === "openai" && protocol === "anthropic") {
             // Response from Anthropic endpoint → convert to OpenAI SSE for original caller
             sseConverter = (chunk: string) => convertAnthropicSSEToOpenAI(chunk, body.model ?? "");

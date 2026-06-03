@@ -15,6 +15,7 @@ import { resolveApiKey, buildAuthHeaders } from "./key-store.js";
 import { SSEPipe, type StreamTokenData } from "./sse-pipe.js";
 import type { RequestHandler, HandleResult } from "@agentfare/hook/request-handler";
 import type { CostTracker, QualitySignalCollector } from "@agentfare/core";
+import type { ModelRegistry, ModelEntry } from "@agentfare/models";
 import {
   convertOpenAIToAnthropicRequest,
 } from "@agentfare/hook/protocol/openai-to-anthropic";
@@ -28,8 +29,7 @@ import {
   convertAnthropicToOpenAIResponse,
 } from "@agentfare/hook/protocol/anthropic-to-openai";
 import {
-  convertOpenAISSEToAnthropic,
-  resetSSEState,
+  createSSEStreamConverter,
 } from "@agentfare/hook/protocol/openai-to-anthropic-sse";
 import {
   convertAnthropicSSEToOpenAI,
@@ -41,6 +41,7 @@ export interface ProxyServerDeps {
   costTracker?: CostTracker;
   qualitySignalCollector?: QualitySignalCollector;
   onlineLearner?: any;
+  registry?: ModelRegistry;
 }
 
 export interface ProxyServerOptions {
@@ -290,8 +291,8 @@ async function handleRequest(
     // Response comes FROM upstream (targetProtocol), needs converting TO client (sourceProtocol)
     if (sourceProtocol === "anthropic" && targetProtocol === "openai") {
       // Upstream sends OpenAI SSE → convert to Anthropic SSE for client
-      resetSSEState();
-      sseConverter = (chunk: string) => convertOpenAISSEToAnthropic(chunk, originalModel);
+      const sseConv = createSSEStreamConverter();
+      sseConverter = (chunk: string) => sseConv.convert(chunk, originalModel);
     } else if (sourceProtocol === "openai" && targetProtocol === "anthropic") {
       // Upstream sends Anthropic SSE → convert to OpenAI SSE for client
       sseConverter = (chunk: string) => convertAnthropicSSEToOpenAI(chunk, originalModel);
@@ -340,16 +341,21 @@ function pipeResponse(
     const pipe = new SSEPipe(
       upstreamProtocol,
       (tokens: StreamTokenData) => {
-        if (result && options.deps.costTracker) {
-          options.deps.costTracker.record(
-            result.analysis,
-            originalModel,
-            undefined,
-            result.decision.targetModel!,
-            result.sessionId,
-            "unknown",
-            tokens,
-          );
+        if (options.deps.costTracker && (tokens.input > 0 || tokens.output > 0)) {
+          if (result) {
+            options.deps.costTracker.record(
+              result.analysis,
+              originalModel,
+              undefined,
+              result.decision.targetModel!,
+              result.sessionId,
+              "unknown",
+              tokens,
+            );
+          } else {
+            // Pass-through: record cost for observability (no reroute)
+            recordPassThroughCost(options, originalModel, tokens);
+          }
         }
         if (result && options.deps.qualitySignalCollector) {
           options.deps.qualitySignalCollector.recordSignal(
@@ -371,14 +377,14 @@ function pipeResponse(
       const fullBody = Buffer.concat(chunks).toString("utf-8");
 
       // Extract tokens from non-streaming response
-      if (result && options.deps.costTracker) {
-        try {
-          const respJson = JSON.parse(fullBody);
-          const tokens = upstreamProtocol === "openai"
-            ? { input: respJson.usage?.prompt_tokens ?? 0, output: respJson.usage?.completion_tokens ?? 0 }
-            : { input: respJson.usage?.input_tokens ?? 0, output: respJson.usage?.output_tokens ?? 0 };
-          if (tokens.input > 0 || tokens.output > 0) {
-            options.deps.costTracker.record(
+      try {
+        const respJson = JSON.parse(fullBody);
+        const tokens = upstreamProtocol === "openai"
+          ? { input: respJson.usage?.prompt_tokens ?? 0, output: respJson.usage?.completion_tokens ?? 0 }
+          : { input: respJson.usage?.input_tokens ?? 0, output: respJson.usage?.output_tokens ?? 0 };
+        if (tokens.input > 0 || tokens.output > 0) {
+          if (result) {
+            options.deps.costTracker?.record(
               result.analysis,
               originalModel,
               undefined,
@@ -387,9 +393,12 @@ function pipeResponse(
               "unknown",
               tokens,
             );
+          } else {
+            // Pass-through: record cost for observability (no reroute)
+            recordPassThroughCost(options, originalModel, tokens);
           }
-        } catch { /* ignore */ }
-      }
+        }
+      } catch { /* ignore */ }
 
       // Non-streaming protocol conversion
       if (sseConverter) {
@@ -432,6 +441,10 @@ function forwardRequest(
 
     const upstreamReq = lib.request(options, (upstreamRes) => {
       resolve(upstreamRes);
+    });
+
+    upstreamReq.setTimeout(120000, () => {
+      upstreamReq.destroy(new Error("upstream timeout"));
     });
 
     upstreamReq.on("error", reject);
@@ -491,4 +504,88 @@ function logError(err: unknown): void {
     const message = err instanceof Error ? err.stack ?? err.message : String(err);
     fs.appendFileSync(logPath, `[${timestamp}] [proxy] ${message}\n`);
   } catch { /* best effort */ }
+}
+
+/** Auto-incrementing counter for pass-through session IDs */
+let passThroughCounter = 0;
+
+/**
+ * Record cost for pass-through requests (no model reroute).
+ * Uses the registry to look up real pricing for accurate cost tracking.
+ */
+function recordPassThroughCost(
+  options: ProxyServerOptions,
+  originalModel: string,
+  tokens: { input: number; output: number },
+): void {
+  if (!options.deps.costTracker) return;
+
+  // Try to find real model entry from registry for accurate pricing
+  const registry = options.deps.registry;
+  let modelEntry;
+  if (registry) {
+    modelEntry = registry.get(originalModel);
+    const all = registry.getAll();
+    if (!modelEntry) {
+      modelEntry = all.find(m => m.api.modelId === originalModel);
+    }
+    if (!modelEntry) {
+      // Strip date suffix (e.g. "claude-sonnet-4-20250514" → "claude-sonnet-4")
+      const stripped = originalModel.replace(/-\d{8}$/, "");
+      if (stripped !== originalModel) {
+        modelEntry = all.find(m =>
+          m.api.modelId === stripped || m.api.modelId.startsWith(stripped + "-"),
+        );
+      }
+    }
+  }
+
+  const targetEntry = modelEntry ?? PASS_THROUGH_MODEL_ENTRY(originalModel);
+
+  if (!modelEntry) {
+    console.warn(`[agentfare] pass-through cost tracking: model "${originalModel}" not in registry, pricing unavailable`);
+  }
+
+  options.deps.costTracker.record(
+    PASS_THROUGH_ANALYSIS,
+    originalModel,
+    modelEntry,
+    targetEntry,
+    `pt-${Date.now()}-${++passThroughCounter}`,
+    "unknown",
+    tokens,
+  );
+}
+
+/** Synthetic StepAnalysis for pass-through requests */
+const PASS_THROUGH_ANALYSIS = {
+  stepType: "unknown" as const,
+  difficulty: 0.5,
+  confidence: 0.3,
+  recommendedTier: "standard" as const,
+  recommendedModel: "",
+  reasoning: "pass-through (no reroute)",
+  needsProviderSwitch: false,
+  estimatedTokens: { input: 0, output: 0 },
+  alternatives: [],
+};
+
+/**
+ * Create a synthetic ModelEntry for pass-through cost tracking.
+ * Uses zero pricing as fallback when model is not in registry.
+ */
+function PASS_THROUGH_MODEL_ENTRY(modelId: string): ModelEntry {
+  return {
+    id: modelId,
+    displayName: modelId,
+    provider: "custom" as const,
+    tier: "standard" as const,
+    api: { baseUrl: "", protocol: "openai" as const, modelId },
+    pricing: { inputPerMillion: 0, outputPerMillion: 0, cacheHitPerMillion: null, currency: "USD" as const },
+    capabilities: {
+      codeGeneration: 0, codeReview: 0, planning: 0, reasoning: 0, toolUse: 0,
+      contextWindow: 0, maxOutputTokens: 0, streaming: true, jsonMode: false,
+    },
+    routing: { avgLatencyMs: 0, tokensPerSecond: 0, availability: 1, region: ["global"] },
+  };
 }

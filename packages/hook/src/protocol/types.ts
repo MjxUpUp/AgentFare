@@ -1,6 +1,12 @@
+export interface OpenAIContentPart {
+  type: "text" | "image_url";
+  text?: string;
+  image_url?: { url: string; detail?: "auto" | "low" | "high" };
+}
+
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | null | OpenAIContentPart[];
   tool_calls?: Array<{
     id: string;
     type: "function";
@@ -17,4 +23,5 @@ export interface AnthropicMessage {
 export type AnthropicContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: any }
-  | { type: "tool_result"; tool_use_id: string; content: string | AnthropicContentBlock[] };
+  | { type: "tool_result"; tool_use_id: string; content: string | AnthropicContentBlock[] }
+  | { type: "image"; source: { type: "base64" | "url"; media_type?: string; data?: string; url?: string } };
