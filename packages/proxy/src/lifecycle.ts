@@ -304,12 +304,12 @@ function getCliVersion(): string | undefined {
 
 /**
  * Check if the running proxy was started by the same CLI version.
- * Returns true if versions match or version info is unavailable.
+ * Returns false if version info is missing (stale proxy from before this feature).
  */
 export function isProxyVersionCurrent(): boolean {
   const state = readProxyState();
-  if (!state?.cliVersion) return true; // no version info — assume current
+  if (!state?.cliVersion) return false; // no version info — assume stale
   const current = getCliVersion();
-  if (!current) return true;
+  if (!current) return true; // can't determine own version — don't restart
   return state.cliVersion === current;
 }
