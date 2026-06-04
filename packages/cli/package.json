@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/cli",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "description": "Command-line interface for AgentFare cost optimization",
   "license": "MIT",
   "main": "dist/index.js",
@@ -24,6 +24,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preinstall": "node dist/preinstall-stop-proxy.js || exit 0",
+    "postinstall": "node dist/postinstall-start-proxy.js || exit 0",
     "prepublishOnly": "node ../../scripts/prepublish-check.js"
   },
   "dependencies": {
