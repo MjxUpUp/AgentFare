@@ -1,10 +1,9 @@
 import type { ModelEntry } from "./types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
+import { getRemoteModelCachePath } from "./paths.js";
 
 const REMOTE_URL = "https://raw.githubusercontent.com/agentfare/models/main/models.json";
-const CACHE_PATH = path.join(os.homedir(), ".agentfare", "cache", "remote-models.json");
 
 export async function fetchRemoteModels(): Promise<ModelEntry[]> {
   try {
@@ -27,9 +26,9 @@ export function mergeRemoteModels(builtin: ModelEntry[], remote: ModelEntry[]): 
 
 export function saveRemoteModels(models: ModelEntry[]): void {
   try {
-    const dir = path.dirname(CACHE_PATH);
+    const dir = path.dirname(getRemoteModelCachePath());
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(models));
+    fs.writeFileSync(getRemoteModelCachePath(), JSON.stringify(models));
   } catch (err) {
     process.stderr.write(`[agentfare] remote model cache write failed: ${err instanceof Error ? err.message : err}\n`);
   }
@@ -37,8 +36,8 @@ export function saveRemoteModels(models: ModelEntry[]): void {
 
 export function loadCachedRemoteModels(): ModelEntry[] {
   try {
-    if (!fs.existsSync(CACHE_PATH)) return [];
-    const data = JSON.parse(fs.readFileSync(CACHE_PATH, "utf-8"));
+    if (!fs.existsSync(getRemoteModelCachePath())) return [];
+    const data = JSON.parse(fs.readFileSync(getRemoteModelCachePath(), "utf-8"));
     return validateModelEntries(data);
   } catch { return []; }
 }

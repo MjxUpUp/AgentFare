@@ -73,7 +73,7 @@ describe("convertOpenAIToAnthropicRequest", () => {
 
   // ── System message edge cases ─────────────────────────────────────────
 
-  it("should drop non-string system message content (array)", () => {
+  it("should extract text from array system message content", () => {
     const result = convertOpenAIToAnthropicRequest({
       model: "gpt-5.4",
       messages: [
@@ -81,11 +81,11 @@ describe("convertOpenAIToAnthropicRequest", () => {
         { role: "user", content: "Hi" },
       ],
     });
-    expect(result.system).toBeUndefined();
+    expect(result.system).toBe("You are helpful");
     expect(result.messages).toHaveLength(1);
   });
 
-  it("should only extract first system message (not join multiple)", () => {
+  it("should join multiple system messages with double newline", () => {
     const result = convertOpenAIToAnthropicRequest({
       model: "gpt-5.4",
       messages: [
@@ -94,9 +94,8 @@ describe("convertOpenAIToAnthropicRequest", () => {
         { role: "user", content: "Hi" },
       ],
     });
-    // Current implementation uses find(), so only the first system message is captured
-    expect(result.system).toBe("First system");
-    // Both system messages are filtered out from messages array
+    expect(result.system).toBe("First system\n\nSecond system");
+    // All system messages are filtered out from messages array
     const userMsgs = result.messages.filter((m) => m.role === "user");
     expect(userMsgs).toHaveLength(1);
   });

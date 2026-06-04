@@ -16,7 +16,7 @@ export class CostTracker {
   ): void {
     const originalCost = originalModelEntry
       ? this.calculateCostFromEntry(originalModelEntry, tokenUsage)
-      : 0;
+      : this.calculateCostFromEntry(targetModel, tokenUsage); // fallback: assume same pricing
     const actualCost = this.calculateCostFromEntry(targetModel, tokenUsage);
     const savings = originalCost - actualCost;
 

@@ -45,8 +45,24 @@ export function convertOpenAIToAnthropicRequest(
     stream: openai.stream ?? false,
   };
 
-  const systemMsg = messages.find((m) => m.role === "system");
-  if (systemMsg) result.system = typeof systemMsg.content === "string" ? systemMsg.content : undefined;
+  // Collect all system messages and join them (OpenAI allows multiple)
+  const systemParts: string[] = [];
+  for (const msg of messages) {
+    if (msg.role !== "system") continue;
+    if (typeof msg.content === "string") {
+      systemParts.push(msg.content);
+    } else if (Array.isArray(msg.content)) {
+      // Extract text from content parts (e.g. [{type:"text",text:"..."}])
+      for (const part of msg.content) {
+        if (typeof part === "object" && part.type === "text" && typeof part.text === "string") {
+          systemParts.push(part.text);
+        }
+      }
+    }
+  }
+  if (systemParts.length > 0) {
+    result.system = systemParts.join("\n\n");
+  }
 
   // Pass 1: merge consecutive tool messages into groups
   const merged: MergedItem[] = [];

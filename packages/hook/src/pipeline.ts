@@ -49,24 +49,52 @@ export const PASS_THROUGH_ANALYSIS: StepAnalysis = {
  *    then match by prefix (finds "claude-sonnet-4-6")
  */
 export function lookupModelEntry(registry: ModelRegistry, modelId: string): ModelEntry | undefined {
-  // 1. Exact match on id
-  const exact = registry.get(modelId);
+  const lower = modelId.toLowerCase();
+
+  // 1. Exact match on id (case-insensitive)
+  const exact = registry.get(modelId) ?? registry.getAll().find(m => m.id.toLowerCase() === lower);
   if (exact) return exact;
 
   const all = registry.getAll();
 
-  // 2. Exact match on api.modelId
-  const byApiId = all.find(m => m.api.modelId === modelId);
+  // 2. Exact match on api.modelId (case-insensitive)
+  const byApiId = all.find(m => m.api.modelId.toLowerCase() === lower);
   if (byApiId) return byApiId;
 
-  // 3. Strip date suffix (-YYYYMMDD) and match by prefix
+  // 3. Strip date suffix (-YYYYMMDD) and retry exact + prefix
   const stripped = modelId.replace(/-\d{8}$/, "");
   if (stripped !== modelId) {
+    const strippedLower = stripped.toLowerCase();
+    const byStripped = all.find(m =>
+      m.api.modelId.toLowerCase() === strippedLower ||
+      m.id.toLowerCase() === strippedLower,
+    );
+    if (byStripped) return byStripped;
+    // Prefix match on stripped
     const byPrefix = all.find(m =>
-      m.api.modelId === stripped || m.api.modelId.startsWith(stripped + "-"),
+      m.api.modelId.toLowerCase().startsWith(strippedLower) ||
+      strippedLower.startsWith(m.api.modelId.toLowerCase()),
     );
     if (byPrefix) return byPrefix;
   }
+
+  // 4. Strip minor version suffix (e.g. "glm-5.1" → "glm-5") and retry
+  const noMinor = lower.replace(/\.\d+$/, "");
+  if (noMinor !== lower) {
+    const byNoMinor = all.find(m =>
+      m.api.modelId.toLowerCase() === noMinor ||
+      m.id.toLowerCase() === noMinor,
+    );
+    if (byNoMinor) return byNoMinor;
+  }
+
+  // 5. Bidirectional prefix match on api.modelId (case-insensitive)
+  //    Handles variants like "claude-sonnet-4-7" → "claude-sonnet-4-6"
+  const byPrefix = all.find(m => {
+    const apiLower = m.api.modelId.toLowerCase();
+    return lower.startsWith(apiLower) || apiLower.startsWith(lower);
+  });
+  if (byPrefix) return byPrefix;
 
   return undefined;
 }
@@ -234,9 +262,9 @@ export async function asyncLogError(err: unknown, prefix?: string): Promise<void
 // Pass-through ID generation
 // ---------------------------------------------------------------------------
 
-let passThroughCounter = 0;
+const passThroughCounter = { value: 0 };
 
 /** Generate a unique ID for pass-through cost tracking. */
 export function generatePassThroughId(): string {
-  return `pt-${Date.now()}-${++passThroughCounter}`;
+  return `pt-${Date.now()}-${++passThroughCounter.value}`;
 }

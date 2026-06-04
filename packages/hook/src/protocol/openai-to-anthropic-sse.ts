@@ -8,12 +8,15 @@
  *   data: [DONE]
  *
  * Anthropic streaming expects:
- *   event: message_start   data: {"type":"message_start","message":{...}}
+ *   event: message_start       data: {"type":"message_start","message":{...}}
  *   event: content_block_start data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
- *   event: content_block_delta  data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"..."}}
- *   event: content_block_stop   data: {"type":"content_block_stop","index":0}
- *   event: message_delta        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},...}
- *   event: message_stop         data: {"type":"message_stop"}
+ *   event: content_block_delta data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"..."}}
+ *   event: content_block_stop  data: {"type":"content_block_stop","index":0}
+ *   event: content_block_start data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"...","name":"...","input":{}}}
+ *   event: content_block_delta data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"..."}}
+ *   event: content_block_stop  data: {"type":"content_block_stop","index":1}
+ *   event: message_delta       data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},...}
+ *   event: message_stop        data: {"type":"message_stop"}
  */
 
 // ── Stateful core (per-instance state, safe for concurrent streams) ──────
@@ -23,17 +26,39 @@ export interface SSEStreamConverter {
   reset(): void;
 }
 
+/** Tracks per-tool-call state across streaming chunks. */
+interface ToolCallTracker {
+  /** Anthropic content block index. */
+  blockIndex: number;
+  /** Whether the content_block_start has been emitted. */
+  started: boolean;
+}
+
 export function createSSEStreamConverter(): SSEStreamConverter {
-  let state: "idle" | "started" | "text_block_started" = "idle";
-  let msgId = "";
+  const s = {
+    state: "idle" as "idle" | "started",
+    msgId: "",
+    /** Next content block index to assign. */
+    nextBlockIndex: 0,
+    /** Track tool calls by their OpenAI index. */
+    toolCalls: new Map<number, ToolCallTracker>(),
+  };
 
   return {
     reset() {
-      state = "idle";
-      msgId = "";
+      s.state = "idle";
+      s.msgId = "";
+      s.nextBlockIndex = 0;
+      s.toolCalls = new Map();
     },
     convert(sseChunk: string, model: string): string | null {
-      return convertChunk(sseChunk, model, () => state, (s) => { state = s; }, () => msgId, (id) => { msgId = id; });
+      return convertChunk(
+        sseChunk, model,
+        () => s.state, (v) => { s.state = v; },
+        () => s.msgId, (id) => { s.msgId = id; },
+        () => s.nextBlockIndex, (i) => { s.nextBlockIndex = i; },
+        () => s.toolCalls, (tc) => { s.toolCalls = tc; },
+      );
     },
   };
 }
@@ -42,9 +67,13 @@ function convertChunk(
   sseChunk: string,
   model: string,
   getState: () => string,
-  setState: (s: "idle" | "started" | "text_block_started") => void,
+  setState: (s: "idle" | "started") => void,
   getMsgId: () => string,
   setMsgId: (id: string) => void,
+  getNextBlockIndex: () => number,
+  setNextBlockIndex: (i: number) => void,
+  getToolCalls: () => Map<number, ToolCallTracker>,
+  setToolCalls: (tc: Map<number, ToolCallTracker>) => void,
 ): string | null {
   const lines = sseChunk.split("\n");
   const results: string[] = [];
@@ -54,9 +83,14 @@ function convertChunk(
     const dataStr = line.slice(6).trim();
 
     if (dataStr === "[DONE]") {
-      // Emit content_block_stop, message_delta, message_stop
-      if (getState() === "text_block_started") {
+      // Close text block if it was started and not already closed by tool calls
+      if (getNextBlockIndex() > 0 && getToolCalls().size === 0) {
         results.push(formatSSE("content_block_stop", { type: "content_block_stop", index: 0 }));
+      }
+      // Close any open tool_use blocks
+      const toolCalls = getToolCalls();
+      for (const [, tracker] of toolCalls) {
+        results.push(formatSSE("content_block_stop", { type: "content_block_stop", index: tracker.blockIndex }));
       }
       results.push(formatSSE("message_delta", {
         type: "message_delta",
@@ -74,8 +108,9 @@ function convertChunk(
     const choice = data.choices?.[0];
     if (!choice) continue;
 
-    // First chunk with role -> message_start
-    if (getState() === "idle" && choice.delta?.role) {
+    // Ensure message is started before processing any content
+    const ensureStarted = () => {
+      if (getState() !== "idle") return;
       setMsgId(data.id ?? `msg_${Date.now()}`);
       results.push(formatSSE("message_start", {
         type: "message_start",
@@ -90,40 +125,24 @@ function convertChunk(
           usage: { input_tokens: 0, output_tokens: 0 },
         },
       }));
-      // Also start a text content block
+      // Start text content block (index 0)
       results.push(formatSSE("content_block_start", {
         type: "content_block_start",
         index: 0,
         content_block: { type: "text", text: "" },
       }));
-      setState("text_block_started");
+      setNextBlockIndex(1);
+      setState("started");
+    };
+
+    // First chunk with role -> message_start (no content block yet)
+    if (getState() === "idle" && choice.delta?.role) {
+      ensureStarted();
     }
 
-    // Content delta
+    // Content delta — always uses block index 0 if no tool calls have been emitted
     if (choice.delta?.content !== undefined && choice.delta.content !== null) {
-      if (getState() === "idle") {
-        // Edge case: content arrived before role — start message first
-        setMsgId(data.id ?? `msg_${Date.now()}`);
-        results.push(formatSSE("message_start", {
-          type: "message_start",
-          message: {
-            id: getMsgId(),
-            type: "message",
-            role: "assistant",
-            model,
-            content: [],
-            stop_reason: null,
-            stop_sequence: null,
-            usage: { input_tokens: 0, output_tokens: 0 },
-          },
-        }));
-        results.push(formatSSE("content_block_start", {
-          type: "content_block_start",
-          index: 0,
-          content_block: { type: "text", text: "" },
-        }));
-        setState("text_block_started");
-      }
+      ensureStarted();
       results.push(formatSSE("content_block_delta", {
         type: "content_block_delta",
         index: 0,
@@ -131,9 +150,60 @@ function convertChunk(
       }));
     }
 
+    // Tool calls delta — proper tool_use content blocks
+    if (choice.delta?.tool_calls) {
+      ensureStarted();
+      const toolCalls = getToolCalls();
+
+      for (const tc of choice.delta.tool_calls) {
+        const tcIndex: number = tc.index ?? 0;
+
+        if (!toolCalls.has(tcIndex)) {
+          // New tool call — emit content_block_start
+          const blockIndex = getNextBlockIndex();
+          const tracker: ToolCallTracker = { blockIndex, started: true };
+          toolCalls.set(tcIndex, tracker);
+          setNextBlockIndex(blockIndex + 1);
+
+          // If we had text content on block 0, close it first
+          if (blockIndex === 1) {
+            results.push(formatSSE("content_block_stop", { type: "content_block_stop", index: 0 }));
+          }
+
+          results.push(formatSSE("content_block_start", {
+            type: "content_block_start",
+            index: blockIndex,
+            content_block: {
+              type: "tool_use",
+              id: tc.id ?? `toolu_${tcIndex}`,
+              name: tc.function?.name ?? "",
+              input: {},
+            },
+          }));
+        }
+
+        const tracker = toolCalls.get(tcIndex)!;
+
+        // Arguments delta — emit as input_json_delta
+        if (tc.function?.arguments) {
+          results.push(formatSSE("content_block_delta", {
+            type: "content_block_delta",
+            index: tracker.blockIndex,
+            delta: { type: "input_json_delta", partial_json: tc.function.arguments },
+          }));
+        }
+      }
+    }
+
     // Finish reason
     if (choice.finish_reason) {
-      if (getState() === "text_block_started") {
+      // Close any open tool_use blocks
+      const toolCalls = getToolCalls();
+      for (const [, tracker] of toolCalls) {
+        results.push(formatSSE("content_block_stop", { type: "content_block_stop", index: tracker.blockIndex }));
+      }
+      // Close text block (index 0) if no tool calls were opened (tool calls close it themselves)
+      if (toolCalls.size === 0 && getNextBlockIndex() > 0) {
         results.push(formatSSE("content_block_stop", { type: "content_block_stop", index: 0 }));
       }
       const stopReason = mapFinishReason(choice.finish_reason);
@@ -144,21 +214,6 @@ function convertChunk(
       }));
       results.push(formatSSE("message_stop", { type: "message_stop" }));
       setState("idle");
-    }
-
-    // Tool calls delta — emit as tool_use content blocks
-    if (choice.delta?.tool_calls) {
-      for (const tc of choice.delta.tool_calls) {
-        // Simplified: emit text delta with tool call info as JSON text
-        // A full implementation would track partial tool call state
-        if (tc.function?.name) {
-          results.push(formatSSE("content_block_delta", {
-            type: "content_block_delta",
-            index: 0,
-            delta: { type: "text_delta", text: `[tool_call: ${tc.function.name}]` },
-          }));
-        }
-      }
     }
   }
 

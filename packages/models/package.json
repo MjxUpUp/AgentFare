@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/models",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Model registry and pricing data for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",

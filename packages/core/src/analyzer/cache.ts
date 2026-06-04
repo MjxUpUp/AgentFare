@@ -3,9 +3,7 @@ import { log } from "../utils/logger.js";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
-
-const CACHE_FILE = path.join(os.homedir(), ".agentfare", "cache", "route-cache.json");
+import { getCacheDir } from "@agentfare/models";
 
 export class RouteCache {
   private cache: Map<string, { analysis: StepAnalysis; timestamp: number }> = new Map();
@@ -55,8 +53,8 @@ export class RouteCache {
 
   private loadFromDisk(): void {
     try {
-      if (fs.existsSync(CACHE_FILE)) {
-        const data = JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8")) as Array<[string, { analysis: StepAnalysis; timestamp: number }]>;
+      if (fs.existsSync(path.join(getCacheDir(), "route-cache.json"))) {
+        const data = JSON.parse(fs.readFileSync(path.join(getCacheDir(), "route-cache.json"), "utf-8")) as Array<[string, { analysis: StepAnalysis; timestamp: number }]>;
         for (const [key, value] of data) {
           if (Date.now() - value.timestamp <= this.ttlMs) {
             this.cache.set(key, value);
@@ -71,10 +69,10 @@ export class RouteCache {
   saveToDisk(): void {
     if (!this.dirty) return;
     try {
-      const dir = path.dirname(CACHE_FILE);
+      const dir = path.dirname(path.join(getCacheDir(), "route-cache.json"));
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       const data = Array.from(this.cache.entries());
-      fs.writeFileSync(CACHE_FILE, JSON.stringify(data));
+      fs.writeFileSync(path.join(getCacheDir(), "route-cache.json"), JSON.stringify(data));
       this.dirty = false;
     } catch (err) {
       log().warn(`[agentfare] Failed to save route cache to disk: ${err instanceof Error ? err.message : err}`);
