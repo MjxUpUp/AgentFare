@@ -10,6 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { StepAnalysis } from "@agentfare/core";
 import type { ModelRegistry, ModelEntry } from "@agentfare/models";
+import { getErrorLogPath } from "@agentfare/models";
 import type { SSEProtocolConverter } from "./response-handler.js";
 import { createSSEStreamConverter } from "./protocol/openai-to-anthropic-sse.js";
 import { convertAnthropicSSEToOpenAI } from "./protocol/sse-transform.js";
@@ -201,11 +202,26 @@ export function sanitizeDecisionForCallback(decision: any): any {
  * Async error logger — replaces sync appendFileSync to avoid blocking the event loop.
  * ISSUE-090: Write errors to ~/.agentfare/errors.log asynchronously.
  */
+/**
+ * Strip potential API keys from a string before logging.
+ * Matches common patterns: ?key=, ?api_key=, Authorization headers, sk-/sk-ant- prefixes in URLs.
+ */
+function sanitizeForLog(input: string): string {
+  return input
+    // Strip query params that look like keys: ?key=xxx, &api_key=xxx, &token=xxx
+    .replace(/([?&](?:api_?key|key|token|secret) ?=)[^&\s"']+/gi, "$1[REDACTED]")
+    // Strip Bearer tokens
+    .replace(/(Bearer\s+)\S+/g, "$1[REDACTED]")
+    // Strip sk-*/sk-ant-* patterns in URLs
+    .replace(/(sk-(?:ant-)?)[a-zA-Z0-9]{8,}/g, "$1[REDACTED]");
+}
+
 export async function asyncLogError(err: unknown, prefix?: string): Promise<void> {
   try {
-    const logPath = path.join(os.homedir(), ".agentfare", "errors.log");
+    const logPath = getErrorLogPath();
     const timestamp = new Date().toISOString();
-    const message = err instanceof Error ? err.stack ?? err.message : String(err);
+    const rawMessage = err instanceof Error ? err.stack ?? err.message : String(err);
+    const message = sanitizeForLog(rawMessage);
     const prefixStr = prefix ? `[${prefix}] ` : "";
     await fs.promises.appendFile(logPath, `[${timestamp}] ${prefixStr}${message}\n`);
   } catch (writeErr) {

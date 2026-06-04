@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       "@agentfare/core": pkgs("core"),
       "@agentfare/models": pkgs("models"),
+      "@agentfare/models/paths": path.resolve(__dirname, "packages/models/dist/paths.js"),
       "@agentfare/hook/fetch-patch": path.resolve(__dirname, "packages/hook/dist/fetch-patch.js"),
       "@agentfare/hook/pipeline": path.resolve(__dirname, "packages/hook/dist/pipeline.js"),
       "@agentfare/hook/request-handler": path.resolve(__dirname, "packages/hook/dist/request-handler.js"),

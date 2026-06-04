@@ -424,7 +424,7 @@ function forwardRequest(
 
     const options: nodeHttp.RequestOptions = {
       hostname: parsed.hostname,
-      port: parsed.port || (isHttps ? 443 : 80),
+      port: parseInt(parsed.port, 10) || (isHttps ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method: "POST",
       headers: {
