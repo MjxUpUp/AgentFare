@@ -6,4 +6,4 @@ coverage/
 agentfare-data/
 *.db
 docs/
-e2e/
+e2e/package-lock.json
