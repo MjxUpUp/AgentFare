@@ -8,7 +8,6 @@
  *
  * Silently skips if:
  *  - Not a global install (local dev installs don't need proxy)
- *  - Proxy wasn't running before the install
  *  - npm_config_skip_agentfare_restart is set
  */
 
@@ -20,32 +19,47 @@ import * as os from "node:os";
 const AGENTFARE_DIR = path.join(os.homedir(), ".agentfare");
 const STATE_FILE = path.join(AGENTFARE_DIR, "proxy.json");
 const RESTART_MARKER = path.join(AGENTFARE_DIR, ".needs-restart");
+const DEFAULT_PORT = 3456;
 
 /** Check if this is a global install. */
 function isGlobalInstall(): boolean {
-  // npm sets npm_config_global or npm_config_location for global installs
   if (process.env.npm_config_global === "true") return true;
   if (process.env.npm_config_location === "global") return true;
-  // pnpm global install
   if (process.env.npm_config_dir?.includes("global")) return true;
   return false;
 }
 
-/** Read the port from state file or marker. */
-function getSavedPort(): number | null {
-  // Try the restart marker first (written by preinstall before killing proxy)
+/** Resolve the agentfare CLI binary path from this script's location. */
+function resolveCliBin(): string {
+  // process.argv[1] = .../node_modules/@agentfare/cli/dist/postinstall-start-proxy.js
+  // Bin entry in package.json: { "agentfare": "dist/index.js" }
+  return path.resolve(path.dirname(process.argv[1]), "index.js");
+}
+
+/** Read the port from restart marker or fall back to default. */
+function resolvePort(): number {
+  // Prefer explicit marker (written by preinstall from 0.1.27+)
   try {
     if (fs.existsSync(RESTART_MARKER)) {
       const data = JSON.parse(fs.readFileSync(RESTART_MARKER, "utf-8"));
-      return data.port ?? null;
+      if (data.port) return data.port;
     }
   } catch { /* ignore */ }
-  return null;
+
+  // No marker — this might be the first upgrade from a version that
+  // didn't write markers. If proxy.json is missing (preinstall deleted it)
+  // and we're in a global install, assume the proxy was running on the default port.
+  if (!fs.existsSync(STATE_FILE)) {
+    return DEFAULT_PORT;
+  }
+
+  // proxy.json still exists — proxy wasn't stopped, nothing to do
+  return 0;
 }
 
 /** Start the proxy daemon using the installed agentfare CLI. */
 function startProxy(port: number): void {
-  const cliBin = path.resolve(path.dirname(process.argv[1]), "agentfare");
+  const cliBin = resolveCliBin();
 
   try {
     const child = child_process.spawn(
@@ -80,9 +94,9 @@ if (!isGlobalInstall()) {
   process.exit(0);
 }
 
-const port = getSavedPort();
-if (!port) {
-  // No previous proxy to restart
+const port = resolvePort();
+if (port === 0) {
+  // Proxy still running or never was — nothing to do
   try { fs.unlinkSync(RESTART_MARKER); } catch { /* ignore */ }
   process.exit(0);
 }
