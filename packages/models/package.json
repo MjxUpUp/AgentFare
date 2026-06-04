@@ -1,13 +1,19 @@
 {
   "name": "@agentfare/models",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Model registry and pricing data for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./paths": { "types": "./dist/paths.d.ts", "default": "./dist/paths.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./paths": {
+      "types": "./dist/paths.d.ts",
+      "default": "./dist/paths.js"
+    }
   },
   "files": [
     "dist"

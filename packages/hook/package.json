@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/hook",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Fetch interception hooks with protocol conversion for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",
