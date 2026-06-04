@@ -19,7 +19,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "node ../../scripts/prepublish-check.js"
   },
   "dependencies": {
     "@agentfare/models": "workspace:*"

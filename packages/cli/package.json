@@ -23,7 +23,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preinstall": "node dist/preinstall-stop-proxy.js || exit 0"
+    "preinstall": "node dist/preinstall-stop-proxy.js || exit 0",
+    "prepublishOnly": "node ../../scripts/prepublish-check.js"
   },
   "dependencies": {
     "@agentfare/core": "workspace:*",
