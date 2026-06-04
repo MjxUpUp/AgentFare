@@ -6,6 +6,9 @@
 import * as path from "node:path";
 import * as os from "node:os";
 
+/** Default proxy port — single source of truth. */
+export const DEFAULT_PROXY_PORT = 3456;
+
 /** Base directory for all AgentFare data. */
 export function getBaseDir(): string {
   const override = process.env.AGENTFARE_HOME;

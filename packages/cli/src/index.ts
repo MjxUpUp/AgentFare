@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 import { Command, CommanderError } from "commander";
+import { setLogger } from "@agentfare/core";
 import { initCommand } from "./commands/init.js";
 import { costCommand } from "./commands/cost.js";
 import { configCommand } from "./commands/config-cmd.js";
 import { modelsCommand } from "./commands/models.js";
 import { optimizeCommand } from "./commands/optimize.js";
 import { proxyCommand } from "./commands/proxy.js";
+
+// CLI owns the process — enable console logging
+setLogger({
+  info(message: string) { console.log(message); },
+  warn(message: string) { console.warn(message); },
+  error(message: string) { console.error(message); },
+});
 
 // ISSUE-051: global error handling
 process.on("unhandledRejection", (err) => {

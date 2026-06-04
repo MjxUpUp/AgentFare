@@ -1,4 +1,5 @@
 import type { StepAnalysis } from "./types.js";
+import { log } from "../utils/logger.js";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -63,7 +64,7 @@ export class RouteCache {
         }
       }
     } catch (err) {
-      console.warn("[agentfare] Failed to load route cache from disk:", err instanceof Error ? err.message : err);
+      log().warn(`[agentfare] Failed to load route cache from disk: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -76,7 +77,7 @@ export class RouteCache {
       fs.writeFileSync(CACHE_FILE, JSON.stringify(data));
       this.dirty = false;
     } catch (err) {
-      console.warn("[agentfare] Failed to save route cache to disk:", err instanceof Error ? err.message : err);
+      log().warn(`[agentfare] Failed to save route cache to disk: ${err instanceof Error ? err.message : err}`);
     }
   }
 }

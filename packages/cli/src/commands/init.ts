@@ -9,17 +9,15 @@ import { Command } from "commander";
 import { detectTools, writeProxyConfig, writeConfig, captureUserBaseUrls } from "@agentfare/setup";
 import { startProxyDaemon, getProxyStatus, isProxyVersionCurrent, stopProxy, type StartResult } from "@agentfare/proxy";
 import { ensureLoaderScript } from "@agentfare/loader";
-import { getConfigPath } from "@agentfare/models";
+import { getConfigPath, DEFAULT_PROXY_PORT } from "@agentfare/models";
 import * as fs from "node:fs";
 import * as path from "node:path";
-
-const DEFAULT_PORT = 3456;
 
 export const initCommand = new Command("init")
   .description("初始化 AgentFare")
   .option("--mode <mode>", "Setup mode: proxy (default) or hook (legacy)", "proxy")
   .option("--tool <tool>", "只配置指定工具")
-  .option("--port <port>", "Proxy 端口 (proxy 模式)", String(DEFAULT_PORT))
+  .option("--port <port>", "Proxy 端口 (proxy 模式)", String(DEFAULT_PROXY_PORT))
   .action(async (opts: { mode: string; tool?: string; port: string }) => {
     const mode = opts.mode === "hook" ? "hook" : "proxy";
     const port = parseInt(opts.port, 10);

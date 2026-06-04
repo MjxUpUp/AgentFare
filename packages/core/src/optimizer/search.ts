@@ -1,6 +1,7 @@
 import type { Pipeline, RankedCombo, SearchConfig } from "./types.js";
 import { DEFAULT_SEARCH_CONFIG } from "./types.js";
 import { computeTotalCombinations } from "./pipeline-parser.js";
+import { log } from "../utils/logger.js";
 
 export function bruteForceSearch(
   pipeline: Pipeline,
@@ -11,7 +12,7 @@ export function bruteForceSearch(
   // Guard against combinatorial explosion — downgrade to hill climbing
   const total = computeTotalCombinations(pipeline);
   if (total > 1_000_000) {
-    console.warn(
+    log().warn(
       `bruteForceSearch: ${total} combinations exceeds limit of 1,000,000 — downgrading to hillClimbingSearch`,
     );
     return hillClimbingSearch(pipeline, costFn, accuracyFn, config);

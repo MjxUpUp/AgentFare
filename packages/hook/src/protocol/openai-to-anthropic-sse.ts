@@ -165,31 +165,6 @@ function convertChunk(
   return results.length > 0 ? results.join("") : null;
 }
 
-// ── Legacy module-level API (deprecated — NOT safe for concurrent streams) ──
-
-let state: "idle" | "started" | "text_block_started" = "idle";
-let msgId = "";
-
-/**
- * @deprecated Use `createSSEStreamConverter()` instead for concurrency safety.
- */
-export function resetSSEState(): void {
-  state = "idle";
-  msgId = "";
-}
-
-/**
- * @deprecated Use `createSSEStreamConverter()` instead for concurrency safety.
- *             The returned converter's `.convert()` method has the same signature.
- */
-export function convertOpenAISSEToAnthropic(sseChunk: string, model: string): string | null {
-  return convertChunk(
-    sseChunk, model,
-    () => state, (s) => { state = s; },
-    () => msgId, (id) => { msgId = id; },
-  );
-}
-
 function formatSSE(event: string, data: any): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }

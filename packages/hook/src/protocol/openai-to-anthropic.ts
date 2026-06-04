@@ -1,4 +1,5 @@
 import type { OpenAIChatMessage, OpenAIContentPart, AnthropicMessage, AnthropicContentBlock } from "./types.js";
+import { getLogger } from "@agentfare/core";
 
 interface OpenAIRequest {
   model: string;
@@ -80,7 +81,7 @@ export function convertOpenAIToAnthropicRequest(
           try {
             parsedInput = JSON.parse(tc.function.arguments);
           } catch {
-            console.warn(
+            getLogger().warn(
               `openai-to-anthropic: failed to parse tool_call arguments (id=${tc.id}, name=${tc.function.name}), falling back to empty object`,
             );
             parsedInput = {};

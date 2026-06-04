@@ -1,6 +1,7 @@
 import type { StepAnalysis, LLMAnalysisInput, Message } from "./types.js";
 import { extractTaskFromMessages } from "./types.js";
 import { estimateTokensFromMessages } from "../utils/tokens.js";
+import { log } from "../utils/logger.js";
 
 export function buildAnalyzerPrompt(input: LLMAnalysisInput): string {
   return `你是一个 AI Agent 步骤分析器。根据以下信息判断这个步骤的难度和推荐模型等级。
@@ -74,7 +75,7 @@ export async function analyzeWithLLM(
       alternatives,
     };
   } catch (err) {
-    console.warn("[agentfare] LLM analyzer failed:", err instanceof Error ? err.message : err);
+    log().warn(`[agentfare] LLM analyzer failed: ${err instanceof Error ? err.message : err}`);
     return null;
   }
 }

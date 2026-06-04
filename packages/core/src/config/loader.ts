@@ -1,6 +1,7 @@
 import type { AgentFareConfig, EnterpriseConfig } from "./types.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
 import { applyEnterprisePolicy } from "./enterprise.js";
+import { log } from "../utils/logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -27,7 +28,7 @@ export function mergeConfig(sources: ConfigSources = {}): AgentFareConfig {
     config = result.config;
     if (result.warnings.length > 0) {
       for (const w of result.warnings) {
-        console.warn(`[AgentFare] ${w}`);
+        log().warn(`[AgentFare] ${w}`);
       }
     }
   }

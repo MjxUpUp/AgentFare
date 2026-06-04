@@ -1,7 +1,7 @@
 // @agentfare/hook — Entry point
 // ISSUE-067a: no top-level side effects. Callers (loader.js) must invoke setup() explicitly.
 
-import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollector } from "@agentfare/core";
+import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollector, getLogger } from "@agentfare/core";
 import { ModelRegistry } from "@agentfare/models";
 import { RequestHandler } from "./request-handler.js";
 import { installFetchPatch } from "./fetch-patch.js";
@@ -51,13 +51,13 @@ export function setup(): void {
       onRouting: () => {},
     });
 
-    console.log("[AgentFare] Hook 已安装 — 智能模型路由已启用");
+    getLogger().info("[AgentFare] Hook 已安装 — 智能模型路由已启用");
   } catch (err) {
     // ISSUE-100: Ensure DB is closed even on init failure
     if (db) {
       try { db.close(); } catch {}
     }
     asyncLogError(err, "hook");
-    console.warn("[AgentFare] Hook 初始化失败，已跳过（不影响宿主进程）");
+    getLogger().warn("[AgentFare] Hook 初始化失败，已跳过（不影响宿主进程）");
   }
 }

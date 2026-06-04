@@ -1,5 +1,6 @@
 import type { TrackingDatabase } from "../tracker/database.js";
 import type { QualitySignal } from "../tracker/quality-signal.js";
+import { log } from "../utils/logger.js";
 
 export interface ModelScore {
   model: string;
@@ -148,7 +149,7 @@ export class OnlineLearner {
         });
       }
     } catch (err) {
-      console.warn("[agentfare] Failed to load scores from DB:", err instanceof Error ? err.message : err);
+      log().warn(`[agentfare] Failed to load scores from DB: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -158,7 +159,7 @@ export class OnlineLearner {
       this.db.upsertModelScores(Array.from(this.modelScores.values()));
       this.dirty = false;
     } catch (err) {
-      console.warn("[agentfare] Failed to persist scores to DB:", err instanceof Error ? err.message : err);
+      log().warn(`[agentfare] Failed to persist scores to DB: ${err instanceof Error ? err.message : err}`);
     }
   }
 }

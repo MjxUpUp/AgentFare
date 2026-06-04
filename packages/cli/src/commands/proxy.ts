@@ -10,7 +10,7 @@
 
 import { Command } from "commander";
 import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollector } from "@agentfare/core";
-import { ModelRegistry } from "@agentfare/models";
+import { ModelRegistry, DEFAULT_PROXY_PORT } from "@agentfare/models";
 import { getDbPath } from "@agentfare/models";
 import { RequestHandler } from "@agentfare/hook/request-handler";
 import {
@@ -21,15 +21,13 @@ import {
   generateExportCommands,
 } from "@agentfare/proxy";
 
-const DEFAULT_PORT = 3456;
-
 export const proxyCommand = new Command("proxy")
   .description("Manage the AgentFare local proxy server");
 
 proxyCommand
   .command("start")
   .description("Start the proxy server")
-  .option("--port <port>", "Port to listen on", String(DEFAULT_PORT))
+  .option("--port <port>", "Port to listen on", String(DEFAULT_PROXY_PORT))
   .action(async (opts: { port: string }) => {
     const port = parseInt(opts.port, 10);
     if (isNaN(port) || port < 1 || port > 65535) {
@@ -92,7 +90,7 @@ proxyCommand
 proxyCommand
   .command("env")
   .description("Output shell-exportable environment variables")
-  .option("--port <port>", "Port the proxy is running on", String(DEFAULT_PORT))
+  .option("--port <port>", "Port the proxy is running on", String(DEFAULT_PROXY_PORT))
   .option("--shell <shell>", "Shell format: bash or powershell", "bash")
   .action((opts: { port: string; shell: string }) => {
     const port = parseInt(opts.port, 10);

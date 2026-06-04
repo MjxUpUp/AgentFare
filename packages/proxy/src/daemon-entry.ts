@@ -8,16 +8,23 @@
  * Usage: node dist/daemon-entry.js --port <port>
  */
 
-import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollector } from "@agentfare/core";
-import { ModelRegistry, getDbPath } from "@agentfare/models";
+import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollector, setLogger } from "@agentfare/core";
+import { ModelRegistry, getDbPath, DEFAULT_PROXY_PORT } from "@agentfare/models";
 import { RequestHandler } from "@agentfare/hook/request-handler";
 import { startProxy } from "./lifecycle.js";
 import { buildProviderMap } from "./provider-map.js";
 
+// Daemon owns the process — enable stderr logging (stdout may be piped to log file)
+setLogger({
+  info(message: string) { process.stdout.write(`${message}\n`); },
+  warn(message: string) { process.stderr.write(`${message}\n`); },
+  error(message: string) { process.stderr.write(`${message}\n`); },
+});
+
 // Parse --port from argv
 function parsePort(): number {
   const portArg = process.argv.find((a, i) => process.argv[i - 1] === "--port");
-  const port = portArg ? parseInt(portArg, 10) : 3456;
+  const port = portArg ? parseInt(portArg, 10) : DEFAULT_PROXY_PORT;
   if (isNaN(port) || port < 1 || port > 65535) {
     process.stderr.write(`Invalid port: ${portArg}\n`);
     process.exit(1);

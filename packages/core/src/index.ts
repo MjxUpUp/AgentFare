@@ -68,3 +68,5 @@ export type { CostReport, StepReport, ToolReport } from "./tracker/report-export
 
 // === Shared utilities ===
 export { estimateTokensFromMessages } from "./utils/tokens.js";
+export { log as getLogger, setLogger, consoleLogger } from "./utils/logger.js";
+export type { Logger } from "./utils/logger.js";
