@@ -11,6 +11,7 @@ import {
   generateProxyExports,
   generatePowerShellExports,
   writeProxyConfig,
+  captureUserBaseUrls,
 } from "../src/shell-writer.js";
 import { detectPlatform, type DetectedTool } from "../src/detector.js";
 
@@ -319,5 +320,110 @@ describe("writeProxyConfig", () => {
       const markerCount = (result.match(/# >>> agentfare >>>/g) || []).length;
       expect(markerCount).toBe(1);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// captureUserBaseUrls — multi-source upstream URL capture
+// ---------------------------------------------------------------------------
+describe("captureUserBaseUrls", () => {
+  let tmpHome: string;
+  let originalHome: string | undefined;
+  let originalUserProfile: string | undefined;
+
+  beforeEach(() => {
+    tmpHome = path.join(os.tmpdir(), `agentfare-capture-test-${Date.now()}`);
+    fs.mkdirSync(tmpHome, { recursive: true });
+    originalHome = process.env.HOME;
+    originalUserProfile = process.env.USERPROFILE;
+    process.env.HOME = tmpHome;
+    process.env.USERPROFILE = tmpHome;
+  });
+
+  afterEach(() => {
+    process.env.HOME = originalHome;
+    process.env.USERPROFILE = originalUserProfile;
+    delete process.env.ANTHROPIC_BASE_URL;
+    delete process.env.OPENAI_BASE_URL;
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it("captures from process.env", () => {
+    process.env.ANTHROPIC_BASE_URL = "https://api.anthropic.com";
+    const result = captureUserBaseUrls(cliTools);
+    expect(result.anthropic).toBe("https://api.anthropic.com");
+  });
+
+  it("skips localhost URLs from process.env", () => {
+    process.env.ANTHROPIC_BASE_URL = "http://localhost:3456/anthropic";
+    const result = captureUserBaseUrls(cliTools);
+    expect(result.anthropic).toBeUndefined();
+  });
+
+  it("falls back to Claude Code's settings.json when env var is absent", () => {
+    // No process.env set — simulate Claude Code's settings.json
+    const claudeDir = path.join(tmpHome, ".claude");
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(claudeDir, "settings.json"),
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic" },
+      })
+    );
+
+    const result = captureUserBaseUrls(cliTools);
+    expect(result.anthropic).toBe("https://open.bigmodel.cn/api/anthropic");
+  });
+
+  it("falls back to settings.json when env var is localhost", () => {
+    process.env.ANTHROPIC_BASE_URL = "http://localhost:3456/anthropic";
+    const claudeDir = path.join(tmpHome, ".claude");
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(claudeDir, "settings.json"),
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic" },
+      })
+    );
+
+    const result = captureUserBaseUrls(cliTools);
+    expect(result.anthropic).toBe("https://open.bigmodel.cn/api/anthropic");
+  });
+
+  it("prefers process.env over settings.json when both have non-localhost values", () => {
+    process.env.ANTHROPIC_BASE_URL = "https://real.anthropic.com";
+    const claudeDir = path.join(tmpHome, ".claude");
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(claudeDir, "settings.json"),
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic" },
+      })
+    );
+
+    const result = captureUserBaseUrls(cliTools);
+    expect(result.anthropic).toBe("https://real.anthropic.com");
+  });
+
+  it("returns empty when no source has the value", () => {
+    const result = captureUserBaseUrls(cliTools);
+    expect(result.anthropic).toBeUndefined();
+  });
+
+  it("captures multiple providers from mixed sources", () => {
+    process.env.OPENAI_BASE_URL = "https://api.openai.com/v1";
+    // ANTHROPIC from settings.json, OPENAI from process.env
+    const claudeDir = path.join(tmpHome, ".claude");
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(claudeDir, "settings.json"),
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic" },
+      })
+    );
+
+    const result = captureUserBaseUrls(cliTools);
+    expect(result.anthropic).toBe("https://open.bigmodel.cn/api/anthropic");
+    expect(result.openai).toBe("https://api.openai.com/v1");
   });
 });

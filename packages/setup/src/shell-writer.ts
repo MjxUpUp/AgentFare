@@ -175,9 +175,72 @@ export function generatePowerShellExports(
 }
 
 /**
+ * Tool-specific config files where *_BASE_URL might be defined.
+ * Used as fallback when the env var isn't in process.env.
+ */
+const TOOL_ENV_CONFIGS: Record<string, { configRelPath: string; envField: string }> = {
+  claude: { configRelPath: ".claude/settings.json", envField: "env" },
+};
+
+function isLocalhostUrl(value: string): boolean {
+  return value.startsWith("http://localhost:") || value.startsWith("http://127.0.0.1:");
+}
+
+/**
+ * Read an env var from a tool's config file (e.g. Claude Code's settings.json).
+ */
+function readEnvFromToolConfig(toolName: string, envVar: string): string | undefined {
+  const source = TOOL_ENV_CONFIGS[toolName];
+  if (!source) return undefined;
+
+  const configPath = path.join(os.homedir(), source.configRelPath);
+  try {
+    if (!fs.existsSync(configPath)) return undefined;
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const env = raw[source.envField];
+    if (typeof env === "object" && env !== null) {
+      const value = env[envVar];
+      if (typeof value === "string" && value.length > 0) return value;
+    }
+  } catch { /* ignore parse errors */ }
+  return undefined;
+}
+
+/**
+ * Read an env var assignment from the existing shell profile.
+ * Handles PowerShell ($env:VAR = "...") and bash/zsh (export VAR="...").
+ */
+function readEnvFromShellProfile(envVar: string): string | undefined {
+  const platform = detectPlatform();
+  if (platform === "windows-native") {
+    const profilePath = getPowerShellProfilePath();
+    try {
+      if (!fs.existsSync(profilePath)) return undefined;
+      const content = fs.readFileSync(profilePath, "utf-8");
+      const match = content.match(new RegExp(`\\$env:${envVar}\\s*=\\s*["']([^"']+)["']`));
+      if (match) return match[1];
+    } catch { /* ignore */ }
+  } else {
+    for (const rc of [path.join(os.homedir(), ".zshrc"), path.join(os.homedir(), ".bashrc")]) {
+      try {
+        if (!fs.existsSync(rc)) continue;
+        const content = fs.readFileSync(rc, "utf-8");
+        const match = content.match(new RegExp(`export ${envVar}=["']([^"']+)["']`));
+        if (match) return match[1];
+      } catch { /* ignore */ }
+    }
+  }
+  return undefined;
+}
+
+/**
  * Capture user's current *_BASE_URL env var values before proxy overwrites them.
  * Returns a map of provider name → original URL.
- * Only captures non-empty, non-localhost values.
+ *
+ * Sources tried in order (first non-localhost value wins):
+ * 1. process.env (current environment)
+ * 2. Tool-specific config files (e.g. Claude Code's settings.json)
+ * 3. Existing shell profile assignments
  */
 export function captureUserBaseUrls(
   tools: Array<DetectedTool>
@@ -185,12 +248,22 @@ export function captureUserBaseUrls(
   const result: Record<string, string> = {};
   for (const tool of tools) {
     if (!tool.envVar || !tool.provider) continue;
-    const value = process.env[tool.envVar];
-    if (!value) continue;
-    // Skip localhost/proxy URLs (already pointing at a proxy)
-    if (value.startsWith("http://localhost:") || value.startsWith("http://127.0.0.1:")) continue;
-    // Skip if we already captured this provider
     if (result[tool.provider]) continue;
+
+    // Source 1: process.env
+    let value = process.env[tool.envVar];
+
+    // Source 2: Tool-specific config (e.g., Claude Code's settings.json)
+    if (!value || isLocalhostUrl(value)) {
+      value = readEnvFromToolConfig(tool.name, tool.envVar) ?? value;
+    }
+
+    // Source 3: Existing shell profile
+    if (!value || isLocalhostUrl(value)) {
+      value = readEnvFromShellProfile(tool.envVar) ?? value;
+    }
+
+    if (!value || isLocalhostUrl(value)) continue;
     result[tool.provider] = value;
   }
   return result;
