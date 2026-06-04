@@ -298,6 +298,11 @@ function pipeResponse(
   sourceProtocol?: "openai" | "anthropic",
   targetProtocol?: "openai" | "anthropic",
 ): void {
+  // Resolve original model pricing entry for accurate cost tracking
+  const originalModelEntry = options.deps.registry
+    ? lookupModelEntry(options.deps.registry, originalModel)
+    : undefined;
+
   // Forward status code and headers
   const statusCode = upstreamRes.statusCode ?? 200;
   const responseHeaders: Record<string, string> = {};
@@ -320,7 +325,7 @@ function pipeResponse(
             options.deps.costTracker.record(
               result.analysis,
               originalModel,
-              undefined,
+              originalModelEntry,
               result.decision.targetModel!,
               result.sessionId,
               "unknown",
@@ -361,7 +366,7 @@ function pipeResponse(
             options.deps.costTracker?.record(
               result.analysis,
               originalModel,
-              undefined,
+              originalModelEntry,
               result.decision.targetModel!,
               result.sessionId,
               "unknown",
