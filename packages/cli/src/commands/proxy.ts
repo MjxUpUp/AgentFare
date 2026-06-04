@@ -9,12 +9,9 @@
  */
 
 import { Command } from "commander";
-import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollector } from "@agentfare/core";
-import { ModelRegistry, DEFAULT_PROXY_PORT } from "@agentfare/models";
-import { getDbPath } from "@agentfare/models";
-import { RequestHandler } from "@agentfare/hook/request-handler";
+import { DEFAULT_PROXY_PORT } from "@agentfare/models";
 import {
-  startProxy,
+  startProxyDaemon,
   stopProxy,
   getProxyStatus,
   generateToolGuide,
@@ -35,24 +32,7 @@ proxyCommand
       process.exit(1);
     }
 
-    // Initialize deps from config
-    const config = loadConfigFromDisk();
-    const registry = new ModelRegistry(config.customModels);
-    const handler = new RequestHandler(config, registry);
-
-    const dbPath = getDbPath();
-    const db = new TrackingDatabase(dbPath);
-    const costTracker = new CostTracker(db);
-    const qualitySignalCollector = new QualitySignalCollector();
-
-    process.on("exit", () => {
-      try { db.close(); } catch {}
-    });
-
-    const result = await startProxy({
-      port,
-      deps: { handler, costTracker, qualitySignalCollector },
-    });
+    const result = await startProxyDaemon(port);
 
     if (!result.success) {
       console.error(`Failed to start proxy: ${result.error}`);
