@@ -137,16 +137,20 @@ export function epsilonLucbSearch(
     }
 
     // Early stop: check if best mean's upper bound is clearly separated from second
-    const sorted = means
-      .map((m, i) => ({ m, i }))
-      .sort((a, b) => a.m - b.m);
-    const bestIdx = sorted[0].i;
-    const secondIdx = sorted[1].i;
-    if (
-      means[bestIdx] + Math.sqrt(Math.log(totalEvals) / (2 * counts[bestIdx])) <
-      means[secondIdx] - Math.sqrt(Math.log(totalEvals) / (2 * counts[secondIdx])) + epsilon * means[secondIdx]
-    ) {
+    if (n < 2) {
       if (config.earlyStop) break;
+    } else {
+      const sorted = means
+        .map((m, i) => ({ m, i }))
+        .sort((a, b) => a.m - b.m);
+      const bestIdx = sorted[0].i;
+      const secondIdx = sorted[1].i;
+      if (
+        means[bestIdx] + Math.sqrt(Math.log(totalEvals) / (2 * counts[bestIdx])) <
+        means[secondIdx] - Math.sqrt(Math.log(totalEvals) / (2 * counts[secondIdx])) + epsilon * means[secondIdx]
+      ) {
+        if (config.earlyStop) break;
+      }
     }
 
     scores[selectedIdx] += costFn(combos[selectedIdx]);

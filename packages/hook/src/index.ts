@@ -24,7 +24,7 @@ export function setup(): void {
 
   try {
     const config = loadConfigFromDisk();
-    const registry = new ModelRegistry(config.customModels as any);
+    const registry = new ModelRegistry(config.customModels);
     const handler = new RequestHandler(config, registry);
 
     const dbPath = getDbPath();

@@ -30,7 +30,7 @@ async function main(): Promise<void> {
 
   // Initialize deps (mirrors packages/cli/src/commands/proxy.ts)
   const config = loadConfigFromDisk();
-  const registry = new ModelRegistry(config.customModels as any);
+  const registry = new ModelRegistry(config.customModels);
   const handler = new RequestHandler(config, registry);
 
   // ISSUE-106: Build dynamic provider map from config (supports user's custom upstream URLs)

@@ -84,8 +84,9 @@ function extractJSON(text: string): string {
   return match ? match[0] : "{}";
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
+function clamp(value: unknown, min: number, max: number): number {
+  const n = typeof value === "number" && Number.isFinite(value) ? value : 0.5;
+  return Math.min(max, Math.max(min, n));
 }
 
 function buildAlternatives(recommendedTier: string): StepAnalysis["alternatives"] {

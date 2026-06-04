@@ -1,3 +1,5 @@
+import type { ModelEntry } from "@agentfare/models";
+
 export type CrossProviderMode = "off" | "opt-in" | "enterprise";
 
 export interface EnterpriseProviderConfig {
@@ -44,20 +46,7 @@ export interface AgentFareConfig {
   };
   routing: RoutingConfig;
   providers: Record<string, ProviderConfig>;
-  customModels: Array<{
-    id: string;
-    provider: string;
-    displayName: string;
-    tier: "fast" | "standard" | "powerful";
-    pricing: { inputPerMillion: number; outputPerMillion: number; cacheHitPerMillion: number | null };
-    capabilities: {
-      codeGeneration: number; codeReview: number; planning: number;
-      reasoning: number; toolUse: number; contextWindow: number;
-      maxOutputTokens: number; streaming: boolean; jsonMode: boolean;
-    };
-    routing: { avgLatencyMs: number; tokensPerSecond: number; availability: number; region: ("us" | "cn" | "global")[] };
-    api: { protocol: "openai" | "anthropic"; baseUrl: string; modelId: string };
-  }>;
+  customModels: ModelEntry[];
   tracking: TrackingConfig;
   onlineLearning: OnlineLearningConfig;
 }

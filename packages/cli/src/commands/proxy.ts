@@ -39,7 +39,7 @@ proxyCommand
 
     // Initialize deps from config
     const config = loadConfigFromDisk();
-    const registry = new ModelRegistry(config.customModels as any);
+    const registry = new ModelRegistry(config.customModels);
     const handler = new RequestHandler(config, registry);
 
     const dbPath = getDbPath();
