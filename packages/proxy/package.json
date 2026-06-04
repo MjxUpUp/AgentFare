@@ -17,14 +17,38 @@
     "directory": "packages/proxy"
   },
   "exports": {
-    ".": "./dist/index.js",
-    "./server": "./dist/server.js",
-    "./lifecycle": "./dist/lifecycle.js",
-    "./provider-map": "./dist/provider-map.js",
-    "./key-store": "./dist/key-store.js",
-    "./sse-pipe": "./dist/sse-pipe.js",
-    "./tool-guide": "./dist/tool-guide.js",
-    "./daemon-entry": "./dist/daemon-entry.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    },
+    "./lifecycle": {
+      "types": "./dist/lifecycle.d.ts",
+      "default": "./dist/lifecycle.js"
+    },
+    "./provider-map": {
+      "types": "./dist/provider-map.d.ts",
+      "default": "./dist/provider-map.js"
+    },
+    "./key-store": {
+      "types": "./dist/key-store.d.ts",
+      "default": "./dist/key-store.js"
+    },
+    "./sse-pipe": {
+      "types": "./dist/sse-pipe.d.ts",
+      "default": "./dist/sse-pipe.js"
+    },
+    "./tool-guide": {
+      "types": "./dist/tool-guide.d.ts",
+      "default": "./dist/tool-guide.js"
+    },
+    "./daemon-entry": {
+      "types": "./dist/daemon-entry.d.ts",
+      "default": "./dist/daemon-entry.js"
+    }
   },
   "scripts": {
     "build": "tsc",
@@ -32,9 +56,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentfare/core": "^0.1.3",
-    "@agentfare/hook": "^0.1.3",
-    "@agentfare/models": "^0.1.3"
+    "@agentfare/core": "workspace:*",
+    "@agentfare/hook": "workspace:*",
+    "@agentfare/models": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

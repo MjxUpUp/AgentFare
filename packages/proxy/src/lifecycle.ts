@@ -82,6 +82,11 @@ export interface StartResult {
  * Start the proxy server in the current process (foreground).
  * Returns a Promise that resolves once the server is listening.
  */
+// ISSUE-097: Store cleanup handler references to prevent accumulation
+let currentCleanupExit: (() => void) | null = null;
+let currentCleanupSigInt: (() => void) | null = null;
+let currentCleanupSigTerm: (() => void) | null = null;
+
 export async function startProxy(
   options: ProxyServerOptions,
 ): Promise<StartResult> {
@@ -103,14 +108,18 @@ export async function startProxy(
         };
         writeProxyState(state);
 
+        // ISSUE-097: Remove previous handlers before registering new ones
+        if (currentCleanupExit) process.off("exit", currentCleanupExit);
+        if (currentCleanupSigInt) process.off("SIGINT", currentCleanupSigInt);
+        if (currentCleanupSigTerm) process.off("SIGTERM", currentCleanupSigTerm);
+
         // Clean up state on process exit
-        const cleanup = () => {
-          clearProxyState();
-          server.close();
-        };
-        process.on("exit", cleanup);
-        process.on("SIGINT", () => { cleanup(); process.exit(0); });
-        process.on("SIGTERM", () => { cleanup(); process.exit(0); });
+        currentCleanupExit = () => { clearProxyState(); server.close(); };
+        currentCleanupSigInt = () => { currentCleanupExit!(); process.exit(0); };
+        currentCleanupSigTerm = () => { currentCleanupExit!(); process.exit(0); };
+        process.on("exit", currentCleanupExit);
+        process.on("SIGINT", currentCleanupSigInt);
+        process.on("SIGTERM", currentCleanupSigTerm);
 
         resolve({ success: true, port: options.port, pid: process.pid });
       });
@@ -260,10 +269,10 @@ export function stopProxy(): { success: boolean; error?: string } {
     return { success: false, error: `Failed to kill process ${state.pid}: ${err.message}` };
   }
 
-  // Wait a bit then clean up state
-  setTimeout(() => {
-    clearProxyState();
-  }, 1000);
+  // ISSUE-098: Clean up state synchronously instead of deferred setTimeout
+  // The daemon's own exit/SIGTERM handler will also clear, but we clear here
+  // to avoid a race window where another process sees stale proxy.json
+  clearProxyState();
 
   return { success: true };
 }
