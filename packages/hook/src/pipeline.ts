@@ -173,7 +173,9 @@ export function convertRequestBody(
     if (converted) {
       return JSON.stringify(converted);
     }
-  } catch {}
+  } catch (conversionErr) {
+    asyncLogError(conversionErr, "protocol-conversion");
+  }
 
   return bodyStr;
 }
@@ -206,8 +208,9 @@ export async function asyncLogError(err: unknown, prefix?: string): Promise<void
     const message = err instanceof Error ? err.stack ?? err.message : String(err);
     const prefixStr = prefix ? `[${prefix}] ` : "";
     await fs.promises.appendFile(logPath, `[${timestamp}] ${prefixStr}${message}\n`);
-  } catch {
-    // Best effort
+  } catch (writeErr) {
+    // Error logger failed — last resort stderr
+    try { process.stderr.write(`[agentfare] asyncLogError failed: ${writeErr}\n`); } catch {}
   }
 }
 

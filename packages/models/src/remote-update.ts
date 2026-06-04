@@ -30,7 +30,9 @@ export function saveRemoteModels(models: ModelEntry[]): void {
     const dir = path.dirname(CACHE_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(CACHE_PATH, JSON.stringify(models));
-  } catch {}
+  } catch (err) {
+    process.stderr.write(`[agentfare] remote model cache write failed: ${err instanceof Error ? err.message : err}\n`);
+  }
 }
 
 export function loadCachedRemoteModels(): ModelEntry[] {

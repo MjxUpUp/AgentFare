@@ -14,6 +14,8 @@ export interface QualitySignalEvent {
 }
 
 export class QualitySignalCollector {
+  private static readonly MAX_SESSION_MAP_SIZE = 5000;
+
   private lastRoutedModels: Map<string, string> = new Map();
   private routedTiers: Map<string, string> = new Map();
   private sessionLastRequest: Map<
@@ -29,6 +31,8 @@ export class QualitySignalCollector {
   }> = [];
 
   recordRoutedModel(sessionId: string, model: string, tier: string): void {
+    this.evictIfNeeded(this.lastRoutedModels);
+    this.evictIfNeeded(this.routedTiers);
     this.lastRoutedModels.set(sessionId, model);
     this.routedTiers.set(sessionId, tier);
   }
@@ -38,6 +42,7 @@ export class QualitySignalCollector {
     model: string,
     stepType: string
   ): void {
+    this.evictIfNeeded(this.sessionLastRequest);
     this.sessionLastRequest.set(sessionId, {
       model,
       stepType,
@@ -125,6 +130,18 @@ export class QualitySignalCollector {
       stepType: last.stepType,
       timestamp: new Date(),
     };
+  }
+
+  private evictIfNeeded(map: Map<string, unknown>): void {
+    if (map.size < QualitySignalCollector.MAX_SESSION_MAP_SIZE) return;
+    // Delete oldest half (first entries in insertion order)
+    const toDelete = Math.floor(map.size / 2);
+    let deleted = 0;
+    for (const key of map.keys()) {
+      if (deleted >= toDelete) break;
+      map.delete(key);
+      deleted++;
+    }
   }
 }
 

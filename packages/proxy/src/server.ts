@@ -372,7 +372,9 @@ function pipeResponse(
             recordPassThroughCost(options, originalModel, tokens);
           }
         }
-      } catch { /* ignore */ }
+      } catch (costErr) {
+        process.stderr.write(`[agentfare] cost tracking error: ${costErr instanceof Error ? costErr.message : costErr}\n`);
+      }
 
       // Non-streaming protocol conversion (ISSUE-082: previously unimplemented)
       if (sseConverter && sourceProtocol && targetProtocol && sourceProtocol !== targetProtocol) {
