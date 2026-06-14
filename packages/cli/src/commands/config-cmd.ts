@@ -2,6 +2,7 @@ import { Command } from "commander";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getConfigPath } from "@agentfare/models";
+import { saveKeys } from "@agentfare/proxy";
 
 export const configCommand = new Command("config").description(
   "管理配置"
@@ -11,6 +12,14 @@ configCommand
   .command("set <key> <value>")
   .description("设置配置项")
   .action((key, value) => {
+    // providers.<name>.apiKey → keys.json (credential SSOT, read by key-store).
+    // Writing it to config.json was a no-op: key-store only reads keys.json.
+    const apiKeyMatch = key.match(/^providers\.([^.]+)\.apiKey$/);
+    if (apiKeyMatch) {
+      saveKeys({ [apiKeyMatch[1]]: value });
+      console.log(`set ${key} (keys.json, hardened)`);
+      return;
+    }
     const configPath = getConfigPath();
     let config: Record<string, unknown> = {};
     if (fs.existsSync(configPath))

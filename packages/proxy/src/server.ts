@@ -14,7 +14,12 @@ import { resolveProvider, getUpstreamPath, buildVirtualUrl, type ProviderInfo } 
 import { resolveApiKey, buildAuthHeaders } from "./key-store.js";
 import { SSEPipe, type StreamTokenData } from "./sse-pipe.js";
 import type { RequestHandler, HandleResult } from "@agentfare/hook/request-handler";
-import type { CostTracker, QualitySignalCollector } from "@agentfare/core";
+import {
+  resolveEffectiveBaseUrl,
+  detectKeyHostConflict,
+  type CostTracker,
+  type QualitySignalCollector,
+} from "@agentfare/core";
 import type { ModelRegistry, ModelEntry } from "@agentfare/models";
 import {
   ANALYZER_TIMEOUT_MS,
@@ -169,8 +174,22 @@ async function handleRequest(
     const targetApi = targetModel.api;
 
     if (result.decision.providerSwitched) {
-      // Cross-provider routing
-      const effectiveBaseUrl = result.decision.enterpriseConfig?.baseUrl ?? targetApi.baseUrl;
+      // Cross-provider routing.
+      // ISSUE: previously used targetApi.baseUrl (the official endpoint), ignoring
+      // the user's relay upstreamUrl — relay keys hit api.anthropic.com → ban risk.
+      const providerUpstreamBaseUrl = options.deps.providerMap?.[targetModel.provider]?.upstreamBaseUrl;
+      const effectiveBaseUrl = resolveEffectiveBaseUrl({
+        enterpriseBaseUrl: result.decision.enterpriseConfig?.baseUrl,
+        providerUpstreamBaseUrl,
+        targetApiBaseUrl: targetApi.baseUrl,
+      });
+      // Ban-guard: warn if a relay-configured provider is still routed to an
+      // official host. resolveEffectiveBaseUrl already prefers the relay, so this
+      // only fires under a conflicting enterprise policy.
+      const hostConflict = detectKeyHostConflict({ effectiveBaseUrl, providerUpstreamBaseUrl });
+      if (hostConflict.conflict) {
+        asyncLogError(`封号风险: ${hostConflict.reason} (provider=${targetModel.provider})`, "proxy");
+      }
       targetUrl = targetApi.protocol === "anthropic"
         ? `${effectiveBaseUrl}/v1/messages`
         : `${effectiveBaseUrl}/chat/completions`;

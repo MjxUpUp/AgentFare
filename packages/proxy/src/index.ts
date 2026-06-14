@@ -34,6 +34,12 @@ export {
   buildAuthHeaders,
 } from "./key-store.js";
 export {
+  saveKeys,
+  applyKeyPermissions,
+  invalidateKeyCache,
+  loadKeysFromDisk,
+} from "./credential-store.js";
+export {
   SSEPipe,
   type StreamTokenData,
 } from "./sse-pipe.js";

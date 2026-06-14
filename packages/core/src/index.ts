@@ -70,3 +70,14 @@ export type { CostReport, StepReport, ToolReport } from "./tracker/report-export
 export { estimateTokensFromMessages } from "./utils/tokens.js";
 export { log as getLogger, setLogger, consoleLogger } from "./utils/logger.js";
 export type { Logger } from "./utils/logger.js";
+export { atomicWriteFileSync } from "./utils/atomic-write.js";
+export {
+  resolveEffectiveBaseUrl,
+  detectKeyHostConflict,
+  isOfficialHost,
+} from "./utils/upstream-guard.js";
+export type {
+  EffectiveBaseUrlInput,
+  KeyHostConflictInput,
+  KeyHostConflictResult,
+} from "./utils/upstream-guard.js";

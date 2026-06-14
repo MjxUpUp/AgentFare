@@ -3,7 +3,7 @@ import { isInternalRequest, extractHeaders } from "./headers.js";
 import type { RequestHandler, HandleResult } from "./request-handler.js";
 import { createStreamingResponseWrapper } from "./response-handler.js";
 import type { SSEProtocolConverter } from "./response-handler.js";
-import type { CostTracker, QualitySignalCollector } from "@agentfare/core";
+import { resolveEffectiveBaseUrl, detectKeyHostConflict, type CostTracker, type QualitySignalCollector } from "@agentfare/core";
 import { ModelRegistry } from "@agentfare/models";
 import type { ModelEntry } from "@agentfare/models";
 import { convertAnthropicToOpenAIResponse } from "./protocol/anthropic-to-openai.js";
@@ -31,6 +31,13 @@ export interface FetchPatchOptions {
   onlineLearner?: any;
   onRouting?: (result: HandleResult) => void;
   onError?: (err: unknown) => void;
+  /**
+   * Per-provider relay upstream base URLs (provider → relay URL). When a
+   * cross-provider route targets a provider listed here, its relay URL is
+   * preferred over the official api.baseUrl to avoid sending relay keys to
+   * official endpoints (ban risk). Mirrors server.ts providerMap usage.
+   */
+  providerUpstreamBaseUrls?: Record<string, string>;
 }
 
 export function installFetchPatch(options: FetchPatchOptions): () => void {
@@ -123,7 +130,18 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
 
       if (result.decision.providerSwitched) {
         const targetApi = targetModel.api;
-        const effectiveBaseUrl = result.decision.enterpriseConfig?.baseUrl ?? targetApi.baseUrl;
+        // ISSUE: previously used targetApi.baseUrl (official), ignoring the user's
+        // relay upstreamUrl — relay keys hit the official endpoint (ban risk).
+        const providerUpstreamBaseUrl = options.providerUpstreamBaseUrls?.[targetModel.provider];
+        const effectiveBaseUrl = resolveEffectiveBaseUrl({
+          enterpriseBaseUrl: result.decision.enterpriseConfig?.baseUrl,
+          providerUpstreamBaseUrl,
+          targetApiBaseUrl: targetApi.baseUrl,
+        });
+        const hostConflict = detectKeyHostConflict({ effectiveBaseUrl, providerUpstreamBaseUrl });
+        if (hostConflict.conflict) {
+          asyncLogError(`封号风险: ${hostConflict.reason} (provider=${targetModel.provider})`, "hook");
+        }
 
         // Detect source protocol from original URL
         sourceProtocol = detectProtocol(url);

@@ -4,36 +4,12 @@
  * Three-tier priority:
  * 1. Keys from the client request (Authorization / x-api-key headers)
  * 2. Environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
- * 3. Config file (~/.agentfare/keys.json)
+ * 3. Config file (~/.agentfare/keys.json) — read via credential-store, which
+ *    re-loads on mtime change so CLI writes reach a running daemon.
  */
 
 import { PROVIDER_ENV_KEY_MAP } from "@agentfare/models";
-import { getBaseDir } from "@agentfare/models";
-import * as fs from "node:fs";
-import * as path from "node:path";
-
-/** Cached keys loaded from disk. */
-let cachedKeys: Record<string, string> | null = null;
-
-/**
- * Load keys from ~/.agentfare/keys.json.
- * Results are cached for the process lifetime.
- */
-function loadKeysFromDisk(): Record<string, string> {
-  if (cachedKeys !== null) return cachedKeys;
-  try {
-    const keysPath = path.join(getBaseDir(), "keys.json");
-    if (fs.existsSync(keysPath)) {
-      const raw = fs.readFileSync(keysPath, "utf-8");
-      cachedKeys = JSON.parse(raw);
-      return cachedKeys!;
-    }
-  } catch {
-    // Ignore parse errors — fall back to empty
-  }
-  cachedKeys = {};
-  return cachedKeys;
-}
+import { loadKeysFromDisk } from "./credential-store.js";
 
 /**
  * Extract API key from request headers.
@@ -77,7 +53,7 @@ export function resolveApiKey(
     if (envValue) return envValue;
   }
 
-  // Tier 3: Config file
+  // Tier 3: keys.json (mtime-aware cache in credential-store)
   const diskKeys = loadKeysFromDisk();
   return diskKeys[provider];
 }
