@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command, CommanderError } from "commander";
 import { setLogger } from "@agentfare/core";
+import { getLoaderPath } from "@agentfare/models";
 import { initCommand } from "./commands/init.js";
 import { costCommand } from "./commands/cost.js";
 import { configCommand } from "./commands/config-cmd.js";
@@ -35,9 +36,7 @@ program
 void (async () => {
   try {
     const fs = require("node:fs") as typeof import("node:fs");
-    const path = require("node:path") as typeof import("node:path");
-    const os = require("node:os") as typeof import("node:os");
-    const loaderPath = path.join(os.homedir(), ".agentfare", "loader.js");
+    const loaderPath = getLoaderPath();
     if (fs.existsSync(loaderPath)) {
       const { ensureLoaderScript } = await import("@agentfare/loader");
       ensureLoaderScript();

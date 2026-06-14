@@ -16,7 +16,8 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 
-const AGENTFARE_DIR = path.join(os.homedir(), ".agentfare");
+// Install-lifecycle script — keep self-contained, mirror getBaseDir() inline.
+const AGENTFARE_DIR = process.env.AGENTFARE_HOME ?? path.join(os.homedir(), ".agentfare");
 const STATE_FILE = path.join(AGENTFARE_DIR, "proxy.json");
 const RESTART_MARKER = path.join(AGENTFARE_DIR, ".needs-restart");
 const DEFAULT_PORT = 3456;

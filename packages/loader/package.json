@@ -23,7 +23,8 @@
     "prepublishOnly": "node ../../scripts/prepublish-check.js"
   },
   "dependencies": {
-    "@agentfare/hook": "workspace:*"
+    "@agentfare/hook": "workspace:*",
+    "@agentfare/models": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

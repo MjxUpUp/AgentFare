@@ -2,11 +2,11 @@
 // Generates ~/.agentfare/loader.js (user-editable), then loads it
 
 import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
+import { getBaseDir, getLoaderPath } from "@agentfare/models";
 
-const LOADER_DIR = path.join(os.homedir(), ".agentfare");
-const LOADER_FILE = path.join(LOADER_DIR, "loader.js");
+// SSOT: packages/models/src/paths.ts. Paths are re-read inside ensureLoaderScript()
+// (NOT module-level consts) so AGENTFARE_HOME changes are honored at call time —
+// this also lets tests isolate under a tmpdir without touching the real ~/.agentfare.
 
 /**
  * Resolve the absolute path to a package entry point.
@@ -20,6 +20,8 @@ function resolvePackagePath(specifier: string): string {
 }
 
 export function ensureLoaderScript(): string {
+  const LOADER_DIR = getBaseDir();
+  const LOADER_FILE = getLoaderPath();
   if (!fs.existsSync(LOADER_DIR)) {
     fs.mkdirSync(LOADER_DIR, { recursive: true });
   }

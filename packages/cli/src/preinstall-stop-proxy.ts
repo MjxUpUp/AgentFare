@@ -14,7 +14,9 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 
-const AGENTFARE_DIR = path.join(os.homedir(), ".agentfare");
+// Runs at npm `preinstall` — deps not on disk yet, cannot import @agentfare/models.
+// Mirrors getBaseDir() (packages/models/src/paths.ts) inline to respect AGENTFARE_HOME.
+const AGENTFARE_DIR = process.env.AGENTFARE_HOME ?? path.join(os.homedir(), ".agentfare");
 const STATE_FILE = path.join(AGENTFARE_DIR, "proxy.json");
 const RESTART_MARKER = path.join(AGENTFARE_DIR, ".needs-restart");
 

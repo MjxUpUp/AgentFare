@@ -1,14 +1,13 @@
 import { Command } from "commander";
 import { TrackingDatabase } from "@agentfare/core";
-import * as path from "node:path";
-import * as os from "node:os";
+import { getDbPath } from "@agentfare/models";
 
 export const costCommand = new Command("cost")
   .description("查看成本报告")
   .option("--last <period>", "时间范围 (1d, 7d, 30d)", "30d")
   .option("--json", "JSON 格式输出", false)
   .action((opts) => {
-    const dbPath = path.join(os.homedir(), ".agentfare", "data.db");
+    const dbPath = getDbPath();
     let db: TrackingDatabase | undefined;
     try {
       db = new TrackingDatabase(dbPath);

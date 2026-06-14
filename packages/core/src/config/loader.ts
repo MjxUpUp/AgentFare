@@ -4,7 +4,7 @@ import { applyEnterprisePolicy } from "./enterprise.js";
 import { log } from "../utils/logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
+import { getBaseDir, getConfigPath } from "@agentfare/models";
 
 interface ConfigSources {
   enterprise?: EnterpriseConfig;
@@ -41,7 +41,7 @@ export function loadConfigFromDisk(projectDir?: string): AgentFareConfig {
 
   const enterprisePaths = [
     "/etc/agentfare/enterprise.json",
-    path.join(os.homedir(), ".agentfare", "enterprise.json"),
+    path.join(getBaseDir(), "enterprise.json"),
   ];
   for (const p of enterprisePaths) {
     if (fs.existsSync(p)) {
@@ -54,7 +54,7 @@ export function loadConfigFromDisk(projectDir?: string): AgentFareConfig {
     }
   }
 
-  const globalPath = path.join(os.homedir(), ".agentfare", "config.json");
+  const globalPath = getConfigPath();
   if (fs.existsSync(globalPath)) {
     try {
       sources.global = JSON.parse(fs.readFileSync(globalPath, "utf-8"));

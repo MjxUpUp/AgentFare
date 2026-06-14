@@ -44,3 +44,8 @@ export function getLoaderPath(): string {
 export function getErrorLogPath(): string {
   return path.join(getBaseDir(), "errors.log");
 }
+
+/** Path to the API keys store (credential SSOT — consumed by key-store / credential-store). */
+export function getKeysPath(): string {
+  return path.join(getBaseDir(), "keys.json");
+}

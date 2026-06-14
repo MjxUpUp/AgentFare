@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
+import { getConfigPath } from "@agentfare/models";
 
 export const configCommand = new Command("config").description(
   "管理配置"
@@ -11,7 +11,7 @@ configCommand
   .command("set <key> <value>")
   .description("设置配置项")
   .action((key, value) => {
-    const configPath = path.join(os.homedir(), ".agentfare", "config.json");
+    const configPath = getConfigPath();
     let config: Record<string, unknown> = {};
     if (fs.existsSync(configPath))
       config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
@@ -25,11 +25,7 @@ configCommand
   .command("get <key>")
   .description("查看配置项")
   .action((key) => {
-    const configPath = path.join(
-      os.homedir(),
-      ".agentfare",
-      "config.json"
-    );
+    const configPath = getConfigPath();
     if (!fs.existsSync(configPath)) {
       console.log("config file not found");
       return;
