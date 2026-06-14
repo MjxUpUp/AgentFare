@@ -24,6 +24,7 @@
     "./response-handler": "./dist/response-handler.js",
     "./headers": "./dist/headers.js",
     "./reentry-guard": "./dist/reentry-guard.js",
+    "./failover": "./dist/failover.js",
     "./protocol/openai-to-anthropic": "./dist/protocol/openai-to-anthropic.js",
     "./protocol/anthropic-to-openai-request": "./dist/protocol/anthropic-to-openai-request.js",
     "./protocol/anthropic-to-openai": "./dist/protocol/anthropic-to-openai.js",

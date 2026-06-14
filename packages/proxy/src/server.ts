@@ -33,6 +33,7 @@ import {
   asyncLogError,
   generatePassThroughId,
 } from "@agentfare/hook/pipeline";
+import { CircuitBreaker, shouldFailover, hostOf } from "@agentfare/hook/failover";
 import type { SSEProtocolConverter } from "@agentfare/hook/response-handler";
 
 export interface ProxyServerDeps {
@@ -61,6 +62,12 @@ export interface ProxyServerOptions {
 }
 
 const UPSTREAM_TIMEOUT_MS = 120_000;
+
+/**
+ * Per-host circuit breaker for upstream providers. Module-level singleton so a
+ * tripped host is short-circuited for the lifetime of the daemon process.
+ */
+const upstreamCircuit = new CircuitBreaker();
 
 /**
  * Create and return the proxy HTTP server (not yet listening).
@@ -242,26 +249,49 @@ async function handleRequest(
   delete targetHeaders["host"];
   delete targetHeaders["content-length"];
 
-  // --- Forward to upstream ---
-  const upstreamRes = await forwardRequest(targetUrl, targetBodyStr, targetHeaders, options.resolveUpstream);
-
-  // --- Handle 5xx fallback ---
-  if (upstreamRes.statusCode && upstreamRes.statusCode >= 500 && result?.decision.targetModel) {
-    asyncLogError(`目标模型 ${result.decision.targetModel.id} 返回 ${upstreamRes.statusCode}`, "proxy");
-    if (options.deps.qualitySignalCollector) {
-      options.deps.qualitySignalCollector.recordSignal(
-        result.decision.targetModel.id,
-        result.analysis.stepType,
-        "error",
-        result.sessionId,
-      );
+  // --- Forward to upstream (circuit breaker + failover) ---
+  // ISSUE: previously only HTTP >= 500 triggered a single fallback; 429/408/
+  // timeouts and network errors were uncaught (forwardRequest rejected → 502),
+  // and there was no circuit breaker so a downed host was retried every request.
+  const targetHost = hostOf(targetUrl);
+  let upstreamRes: nodeHttp.IncomingMessage | undefined;
+  let forwardError: unknown;
+  if (upstreamCircuit.allowRequest(targetHost)) {
+    upstreamCircuit.onAttempt(targetHost);
+    try {
+      upstreamRes = await forwardRequest(targetUrl, targetBodyStr, targetHeaders, options.resolveUpstream);
+    } catch (err) {
+      forwardError = err; // network error / timeout — previously a bare 502
     }
-    // Fallback to original request
-    upstreamRes.resume(); // drain
+  } else {
+    asyncLogError(`熔断器开启: 跳过 ${targetHost}`, "proxy");
+  }
+
+  // --- Failover: 5xx / 429 / 408 / network error / timeout → fall back to original ---
+  if (shouldFailover(upstreamRes?.statusCode, forwardError)) {
+    if (result?.decision.targetModel) {
+      asyncLogError(
+        `目标模型 ${result.decision.targetModel.id} 失败 (${forwardError ? "网络错误/超时" : `状态 ${upstreamRes?.statusCode}`})`,
+        "proxy",
+      );
+      if (options.deps.qualitySignalCollector) {
+        options.deps.qualitySignalCollector.recordSignal(
+          result.decision.targetModel.id,
+          result.analysis.stepType,
+          "error",
+          result.sessionId,
+        );
+      }
+    }
+    if (upstreamRes) upstreamRes.resume(); // drain the failed response
+    upstreamCircuit.recordFailure(targetHost);
+    // Fallback to the original (un-routed) request
     const fallbackRes = await forwardRequest(virtualUrl, bodyStr, headers, options.resolveUpstream);
     pipeResponse(fallbackRes, res, targetProtocol, isStreaming, originalModel, undefined, options, result, sourceProtocol, targetProtocol);
     return;
   }
+
+  upstreamCircuit.recordSuccess(targetHost);
 
   // --- Record quality signals ---
   if (result?.decision.targetModel && options.deps.qualitySignalCollector) {
@@ -289,8 +319,10 @@ async function handleRequest(
     : undefined;
 
   // --- Pipe response back to client ---
+  // upstreamRes is defined on this path: shouldFailover() returned false, which
+  // requires a concrete non-failover status code (undefined status → failover).
   pipeResponse(
-    upstreamRes, res,
+    upstreamRes!, res,
     targetProtocol, isStreaming,
     originalModel,
     sseConverter,

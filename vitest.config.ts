@@ -16,6 +16,7 @@ export default defineConfig({
       "@agentfare/hook/pipeline": path.resolve(__dirname, "packages/hook/dist/pipeline.js"),
       "@agentfare/hook/request-handler": path.resolve(__dirname, "packages/hook/dist/request-handler.js"),
       "@agentfare/hook/reentry-guard": path.resolve(__dirname, "packages/hook/dist/reentry-guard.js"),
+      "@agentfare/hook/failover": path.resolve(__dirname, "packages/hook/dist/failover.js"),
       "@agentfare/hook/protocol/openai-to-anthropic": path.resolve(__dirname, "packages/hook/dist/protocol/openai-to-anthropic.js"),
       "@agentfare/hook/protocol/anthropic-to-openai": path.resolve(__dirname, "packages/hook/dist/protocol/anthropic-to-openai.js"),
       "@agentfare/hook/protocol/anthropic-to-openai-request": path.resolve(__dirname, "packages/hook/dist/protocol/anthropic-to-openai-request.js"),

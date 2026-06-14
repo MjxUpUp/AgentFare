@@ -19,8 +19,15 @@ import {
   asyncLogError,
   generatePassThroughId,
 } from "./pipeline.js";
+import { CircuitBreaker, shouldFailover, hostOf } from "./failover.js";
 
 const ORIGINAL_FETCH_SYMBOL = Symbol("agentfare:originalFetch");
+
+/**
+ * Per-host circuit breaker for upstream providers. Module-level singleton so a
+ * tripped host is short-circuited for the lifetime of the patched fetch.
+ */
+const upstreamCircuit = new CircuitBreaker();
 
 export interface FetchPatchOptions {
   handler: RequestHandler;
@@ -171,17 +178,44 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
         }
       }
 
-      const response = await originalFetch.call(this, input, modifiedInit);
+      // --- Forward to upstream (circuit breaker + failover) ---
+      // ISSUE: previously only HTTP >= 500 triggered a single fallback; 429/408
+      // were not covered, and there was no circuit breaker — a downed upstream
+      // kept getting hammered on every request.
+      const targetHost = hostOf(
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+      );
+      let upstreamResponse: Response | undefined;
+      let forwardError: unknown;
+      if (upstreamCircuit.allowRequest(targetHost)) {
+        upstreamCircuit.onAttempt(targetHost);
+        try {
+          upstreamResponse = await originalFetch.call(this, input, modifiedInit);
+        } catch (err) {
+          forwardError = err; // network error / abort — recorded as a circuit failure
+        }
+      } else {
+        asyncLogError(`熔断器开启: 跳过 ${targetHost}`, "hook");
+      }
 
-      // 5xx fallback
-      if (response.status >= 500) {
-        asyncLogError(`目标模型 ${targetModel.id} 返回 ${response.status}`, "hook");
+      // Failover: 5xx / 429 / 408 / network error / timeout → fall back to original
+      if (shouldFailover(upstreamResponse?.status, forwardError)) {
+        asyncLogError(
+          `目标模型 ${targetModel.id} 失败 (${forwardError ? "网络错误/超时" : `状态 ${upstreamResponse?.status}`})`,
+          "hook",
+        );
         if (qualityCollector) {
           qualityCollector.recordSignal(targetModel.id, result.analysis.stepType, "error", result.sessionId);
           onlineLearner?.recordSignal(targetModel.id, result.analysis.stepType, "error");
         }
+        upstreamCircuit.recordFailure(targetHost);
         return originalFetch.call(this, input, init);
       }
+
+      upstreamCircuit.recordSuccess(targetHost);
+      // upstreamResponse is defined on this path: shouldFailover() returned false
+      // ⇒ a concrete non-failover status (undefined status ⇒ failover).
+      const response = upstreamResponse!;
 
       if (qualityCollector) {
         qualityCollector.recordRoutedModel(

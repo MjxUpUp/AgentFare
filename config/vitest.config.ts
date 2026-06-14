@@ -15,6 +15,7 @@ export default defineConfig({
       "@agentfare/hook/fetch-patch": path.resolve(__dirname, "../packages/hook/dist/fetch-patch.js"),
       "@agentfare/hook/request-handler": path.resolve(__dirname, "../packages/hook/dist/request-handler.js"),
       "@agentfare/hook/reentry-guard": path.resolve(__dirname, "../packages/hook/dist/reentry-guard.js"),
+      "@agentfare/hook/failover": path.resolve(__dirname, "../packages/hook/dist/failover.js"),
       "@agentfare/core": pkgs("core"),
       "@agentfare/models": pkgs("models"),
       "@agentfare/hook": pkgs("hook"),
