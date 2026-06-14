@@ -8,6 +8,7 @@ import { configCommand } from "./commands/config-cmd.js";
 import { modelsCommand } from "./commands/models.js";
 import { optimizeCommand } from "./commands/optimize.js";
 import { proxyCommand } from "./commands/proxy.js";
+import { restoreCommand } from "./commands/restore.js";
 
 // CLI owns the process — enable console logging
 setLogger({
@@ -50,6 +51,7 @@ program.addCommand(configCommand);
 program.addCommand(modelsCommand);
 program.addCommand(optimizeCommand);
 program.addCommand(proxyCommand);
+program.addCommand(restoreCommand);
 
 // Suppress CommanderError stack traces for --help/--version (exitCode 0)
 // while still re-throwing genuine unexpected errors.

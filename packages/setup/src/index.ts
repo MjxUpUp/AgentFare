@@ -4,7 +4,7 @@ import { validateHookInjection } from "./validator.js";
 import { reportStatus } from "./reporter.js";
 
 export { detectTools, detectPlatform, type ToolName, type DetectedTool, type Platform } from "./detector.js";
-export { generateShellFunctions, writeShellConfig, generatePowerShellFunctions, getPowerShellProfilePath, writePowerShellProfile, writeConfig, generateProxyExports, generatePowerShellExports, writeProxyConfig, captureUserBaseUrls } from "./shell-writer.js";
+export { generateShellFunctions, writeShellConfig, generatePowerShellFunctions, getPowerShellProfilePath, writePowerShellProfile, writeConfig, generateProxyExports, generatePowerShellExports, writeProxyConfig, captureUserBaseUrls, cleanShellMarkers, writeRestoredBaseUrls, restoreShellProfile, MARKER_START, MARKER_END } from "./shell-writer.js";
 export { validateHookInjection } from "./validator.js";
 export { reportStatus } from "./reporter.js";
 

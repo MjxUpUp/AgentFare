@@ -5,6 +5,8 @@ import { costCommand } from "../src/commands/cost.js";
 import { configCommand, setNestedValue } from "../src/commands/config-cmd.js";
 import { modelsCommand } from "../src/commands/models.js";
 import { optimizeCommand } from "../src/commands/optimize.js";
+import { proxyCommand } from "../src/commands/proxy.js";
+import { restoreCommand } from "../src/commands/restore.js";
 
 describe("CLI entry", () => {
   it("should create a commander program", () => {
@@ -19,7 +21,7 @@ describe("CLI entry", () => {
 // ---------------------------------------------------------------------------
 
 describe("CLI subcommand registration", () => {
-  it("all 5 subcommands have registered action handlers", () => {
+  it("all 7 subcommands have registered action handlers", () => {
     const program = new Command();
     program
       .name("agentfare")
@@ -31,6 +33,8 @@ describe("CLI subcommand registration", () => {
     program.addCommand(configCommand);
     program.addCommand(modelsCommand);
     program.addCommand(optimizeCommand);
+    program.addCommand(proxyCommand);
+    program.addCommand(restoreCommand);
 
     const cmds = program.commands;
     const names = cmds.map((c) => c.name());
@@ -39,6 +43,8 @@ describe("CLI subcommand registration", () => {
     expect(names).toContain("config");
     expect(names).toContain("models");
     expect(names).toContain("optimize");
+    expect(names).toContain("proxy");
+    expect(names).toContain("restore");
   });
 });
 
@@ -111,6 +117,8 @@ describe("unknown command handling (ISSUE-051)", () => {
     program.addCommand(configCommand);
     program.addCommand(modelsCommand);
     program.addCommand(optimizeCommand);
+    program.addCommand(proxyCommand);
+    program.addCommand(restoreCommand);
 
     await expect(
       program.parseAsync(["node", "agentfare", "nonexistent-command"])
@@ -129,6 +137,8 @@ describe("unknown command handling (ISSUE-051)", () => {
     program.addCommand(configCommand);
     program.addCommand(modelsCommand);
     program.addCommand(optimizeCommand);
+    program.addCommand(proxyCommand);
+    program.addCommand(restoreCommand);
 
     let errorMsg = "";
     // Capture stderr-like output
@@ -173,6 +183,8 @@ describe("--help and --version exit handling", () => {
     program.addCommand(configCommand);
     program.addCommand(modelsCommand);
     program.addCommand(optimizeCommand);
+    program.addCommand(proxyCommand);
+    program.addCommand(restoreCommand);
     return program;
   }
 

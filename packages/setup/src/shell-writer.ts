@@ -3,8 +3,8 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { detectPlatform, type Platform, type DetectedTool } from "./detector.js";
 
-const MARKER_START = "# >>> agentfare >>>";
-const MARKER_END = "# <<< agentfare <<<";
+export const MARKER_START = "# >>> agentfare >>>";
+export const MARKER_END = "# <<< agentfare <<<";
 
 export function generateShellFunctions(
   tools: Array<{ name: string }>
@@ -53,7 +53,10 @@ export function writeShellConfig(content: string): string {
  * On Windows where cross-drive rename may fail, falls back to copy+unlink.
  */
 function atomicWriteFileSync(targetPath: string, data: string): void {
-  const tmpPath = path.join(os.tmpdir(), `.agentfare-rc-${Date.now()}.tmp`);
+  const tmpPath = path.join(
+    os.tmpdir(),
+    `.agentfare-rc-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`
+  );
   fs.writeFileSync(tmpPath, data, "utf-8");
   try {
     fs.renameSync(tmpPath, targetPath);
@@ -282,4 +285,134 @@ export function writeProxyConfig(
   const content = generateProxyExports(tools, port)
   const rcPath = writeShellConfig(content)
   return { rcPath, platform }
+}
+
+// ---------------------------------------------------------------------------
+// Restore (reverse of init / proxy takeover)
+// ---------------------------------------------------------------------------
+
+/** Regex matching one full agentfare marker block (start ... end, inclusive). */
+function markerRegex(): RegExp {
+  return new RegExp(
+    `${escapeRegex(MARKER_START)}[\\s\\S]*?${escapeRegex(MARKER_END)}`,
+    "g"
+  );
+}
+
+/**
+ * Remove every agentfare marker block from a shell profile.
+ * Without an argument, cleans the first existing POSIX rc (.zshrc then .bashrc).
+ * With an explicit rcPath, cleans only that file.
+ * Returns the path that was cleaned, or undefined if none existed.
+ */
+export function cleanShellMarkers(
+  rcPath?: string,
+  homeDirOverride?: string
+): string | undefined {
+  const homeDir = homeDirOverride ?? os.homedir();
+  const candidates = rcPath
+    ? [rcPath]
+    : [path.join(homeDir, ".zshrc"), path.join(homeDir, ".bashrc")];
+  let touched: string | undefined;
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue;
+    const existing = fs.readFileSync(p, "utf-8");
+    const cleaned = existing
+      .replace(markerRegex(), "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    atomicWriteFileSync(p, cleaned + "\n");
+    touched = p;
+    if (rcPath) break;
+  }
+  return touched;
+}
+
+/**
+ * Append restored *_BASE_URL exports (or unsets) to a profile.
+ * For each CLI tool: if a captured upstream URL exists, write it back;
+ * otherwise emit an `unset` / `Remove-Item` so no stale proxy URL lingers.
+ * Returns the list of provider names whose URL was restored.
+ */
+export function writeRestoredBaseUrls(
+  tools: Array<DetectedTool>,
+  capturedUrls: Record<string, string>,
+  rcPath: string,
+  platform: Platform
+): string[] {
+  const restored: string[] = [];
+  const lines: string[] = [];
+  for (const t of tools) {
+    if (t.type !== "cli" || !t.envVar || !t.provider) continue;
+    const url = capturedUrls[t.provider];
+    if (typeof url === "string" && url.length > 0) {
+      lines.push(
+        platform === "windows-native"
+          ? `$env:${t.envVar} = "${url}"`
+          : `export ${t.envVar}="${url}"`
+      );
+      restored.push(t.provider);
+    } else {
+      // No captured URL — clear any leftover proxy assignment
+      lines.push(
+        platform === "windows-native"
+          ? `Remove-Item Env:\\${t.envVar} -ErrorAction SilentlyContinue`
+          : `unset ${t.envVar}`
+      );
+    }
+  }
+  if (lines.length === 0) return restored;
+  const dir = path.dirname(rcPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  let existing = fs.existsSync(rcPath) ? fs.readFileSync(rcPath, "utf-8") : "";
+  // Idempotency: strip any prior assignment for these vars so re-running restore
+  // does not duplicate export/unset lines.
+  for (const t of tools) {
+    if (!t.envVar) continue;
+    const v = escapeRegex(t.envVar);
+    existing = existing
+      .replace(new RegExp(`^export ${v}=.*$\\n?`, "gm"), "")
+      .replace(new RegExp(`^unset ${v}\\b.*$\\n?`, "gm"), "")
+      .replace(new RegExp(`^\\$env:${v}\\s*=.*$\\n?`, "gm"), "")
+      .replace(new RegExp(`^Remove-Item Env:\\\\${v}.*$\\n?`, "gm"), "");
+  }
+  const base = existing.replace(/\n{3,}/g, "\n\n").replace(/\n+$/, "");
+  atomicWriteFileSync(rcPath, `${base}\n\n${lines.join("\n")}\n`);
+  return restored;
+}
+
+/**
+ * Reverse the shell-profile takeover: strip agentfare marker blocks, then write
+ * back the user's original *_BASE_URL exports (captured during `init`).
+ * Idempotent — running twice produces the same profile state.
+ */
+export function restoreShellProfile(
+  tools: Array<DetectedTool>,
+  capturedUrls: Record<string, string> = {},
+  platformOverride?: Platform,
+  homeDirOverride?: string
+): { rcPath: string; platform: Platform; restored: string[] } {
+  const platform = platformOverride ?? detectPlatform();
+  if (platform === "windows-native") {
+    const rcPath = getPowerShellProfilePath();
+    const dir = path.dirname(rcPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (fs.existsSync(rcPath)) {
+      const existing = fs.readFileSync(rcPath, "utf-8");
+      const cleaned = existing.replace(markerRegex(), "").replace(/\n{3,}/g, "\n\n").trim();
+      atomicWriteFileSync(rcPath, cleaned + "\n");
+    } else {
+      atomicWriteFileSync(rcPath, "");
+    }
+    const restored = writeRestoredBaseUrls(tools, capturedUrls, rcPath, platform);
+    return { rcPath, platform, restored };
+  }
+
+  // POSIX: clean markers from candidate rc files, write to the first existing.
+  const homeDir = homeDirOverride ?? os.homedir();
+  cleanShellMarkers(undefined, homeDir);
+  let rcPath = path.join(homeDir, ".zshrc");
+  if (!fs.existsSync(rcPath)) rcPath = path.join(homeDir, ".bashrc");
+  const restored = writeRestoredBaseUrls(tools, capturedUrls, rcPath, platform);
+  return { rcPath, platform, restored };
 }
