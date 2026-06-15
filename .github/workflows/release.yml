@@ -1,27 +1,28 @@
 name: Release
 
+# tag-based 统一发布：打 v*.*.* tag 触发，build 后递归 publish 全部包。
+# 内部 @agentfare/* 依赖用 workspace:*，pnpm publish 时自动替换为真实版本。
+# 版本由 scripts/bump-version.mjs 统一管理（VERSION=x.y.z pnpm version:bump）。
+
 on:
   push:
-    branches: [main]
+    tags:
+      - "v*"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Version & Publish
+  publish:
+    name: Build & Publish
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
       id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          # changesets needs full history to compute version diffs
-          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -31,7 +32,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
@@ -41,21 +42,8 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Create Release Pull Request or Publish
-        id: changesets
-        uses: changesets/action@v1
-        with:
-          # `publish` runs when a "Version Packages" PR is merged; otherwise a
-          # changeset is consumed and a version PR is opened.
-          publish: pnpm changeset publish
-          version: pnpm changeset version
-          commit: "chore(release): version packages"
-          title: "chore(release): version packages"
+      - name: Publish all packages
+        # -r 递归发布；--no-git-checks 跳过 git clean 检查（CI checkout 视为干净）
+        run: pnpm publish -r --no-git-checks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Print publish output
-        if: steps.changesets.outputs.published == 'true'
-        run: echo "${{ steps.changesets.outputs.published }}"
