@@ -378,7 +378,13 @@ export function writeRestoredBaseUrls(
   for (const t of tools) {
     if (!t.envVar) continue;
     const v = escapeRegex(t.envVar);
-    const hasValue = typeof capturedUrls[t.provider ?? ""] === "string";
+    // Mirror the write-side value gate above (typeof === "string" && length > 0).
+    // An empty-string capture must count as "no value": it should fall into the
+    // strip-only-localhost branch that PRESERVES a hand-written real upstream URL,
+    // not the strip-ALL branch that would delete it. Without the length check,
+    // hasValue and the assignment gate disagree for "" inputs.
+    const capturedUrl = capturedUrls[t.provider ?? ""];
+    const hasValue = typeof capturedUrl === "string" && capturedUrl.length > 0;
     if (hasValue) {
       existing = existing
         .replace(new RegExp(`^export ${v}=.*$\\n?`, "gm"), "")

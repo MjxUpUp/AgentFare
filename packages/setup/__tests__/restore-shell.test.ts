@@ -134,6 +134,33 @@ describe("restoreShellProfile (POSIX branch, isolated tmp home)", () => {
     expect(result.restored).toEqual(["anthropic"]);
   });
 
+  // Empty-string capture must be treated as "no value", exactly like a missing
+  // key. The cleanup gate previously checked only typeof === "string" (without
+  // length), disagreeing with the write-side gate (typeof === "string" &&
+  // length > 0) and wrongly routing "" into the strip-ALL branch — deleting a
+  // hand-written real upstream URL. Now both gates agree: "" → strip-only-
+  // localhost, preserve the user's URL.
+  it("treats an empty-string captured URL as no-value and preserves the user URL", () => {
+    simulateTakeover(8787);
+    const existing = fs.readFileSync(zshrc, "utf-8");
+    fs.writeFileSync(
+      zshrc,
+      `${existing.replace(/\n+$/, "")}\nexport OPENAI_BASE_URL="https://my-relay.example.com/v1"\n`,
+    );
+    const result = restoreShellProfile(
+      CLI_TOOLS,
+      { anthropic: "https://api.anthropic.com", openai: "" }, // openai = empty string
+      "linux",
+      tmpHome,
+    );
+    const after = fs.readFileSync(zshrc, "utf-8");
+    expect(after).not.toContain("localhost");
+    expect(after).toContain('export ANTHROPIC_BASE_URL="https://api.anthropic.com"');
+    // The user's own openai relay survives — "" is no-value, not has-value.
+    expect(after).toContain('export OPENAI_BASE_URL="https://my-relay.example.com/v1"');
+    expect(result.restored).toEqual(["anthropic"]);
+  });
+
   // M2: when both .zshrc and .bashrc exist and were takeover targets, both must
   // get their BASE_URL restored — not just the first one.
   it("restores BASE_URLs into BOTH .zshrc and .bashrc (M2)", () => {
