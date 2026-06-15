@@ -6,4 +6,10 @@ coverage/
 agentfare-data/
 *.db
 docs/
+
+# pnpm project — npm's lockfile is not used; only pnpm-lock.yaml is canonical
+package-lock.json
 e2e/package-lock.json
+
+# Forge runtime artifacts (task state, reviews, sessions, hooks) — not source
+.forge/
