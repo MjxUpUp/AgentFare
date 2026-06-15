@@ -239,6 +239,30 @@ describe("Router", () => {
     expect(result.targetModel!.provider).toBe("openai");
     expect(result.providerSwitched).toBe(false);
   });
+
+  // M1: every decision is enriched with the selection tier and same-tier
+  // failover candidates, so transport layers and onRouting can observe them.
+  it("enriches decisions with tier and same-tier failover candidates (M1)", () => {
+    const router = makeRouter(); // crossProvider off → same-provider route
+    const analysis = makeAnalysis({ recommendedTier: "fast", reasoning: "easy" });
+    const result = router.decide("https://api.openai.com/v1/chat/completions", analysis);
+    expect(result.targetModel).not.toBeNull();
+    expect(result.tier).toBe("fast");
+    // failoverCandidates excludes the chosen target and is capped.
+    expect(Array.isArray(result.failoverCandidates)).toBe(true);
+    expect(result.failoverCandidates!.length).toBeLessThanOrEqual(5);
+    expect(result.failoverCandidates!.every((m) => m.tier === "fast")).toBe(true);
+    expect(result.failoverCandidates!.map((m) => m.id)).not.toContain(result.targetModel!.id);
+  });
+
+  // M1: null-target decisions still carry the tier but no candidates.
+  it("enriches null-target decisions with tier but no candidates (M1)", () => {
+    const router = makeRouter();
+    const result = router.decide("https://unrecognized.example.com/v1", makeAnalysis({ recommendedTier: "standard" }));
+    expect(result.targetModel).toBeNull();
+    expect(result.tier).toBe("standard");
+    expect(result.failoverCandidates).toBeUndefined();
+  });
 });
 
 describe("Router — enterprise and cross-provider integration", () => {

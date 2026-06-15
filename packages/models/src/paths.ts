@@ -12,7 +12,9 @@ export const DEFAULT_PROXY_PORT = 3456;
 /** Base directory for all AgentFare data. */
 export function getBaseDir(): string {
   const override = process.env.AGENTFARE_HOME;
-  return override ?? path.join(os.homedir(), ".agentfare");
+  // Empty/whitespace override must fall back to the default — otherwise every
+  // path derived from it becomes relative and drifts with the cwd.
+  return override && override.trim() ? override : path.join(os.homedir(), ".agentfare");
 }
 
 /** Path to the SQLite tracking database. */

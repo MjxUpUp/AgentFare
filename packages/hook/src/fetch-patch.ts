@@ -126,6 +126,13 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
       const targetModel = result.decision.targetModel;
       const originalModelEntry = options.registry && currentModel ? lookupModelEntry(options.registry, currentModel) : undefined;
 
+      // Snapshot the ORIGINAL request before any cross-provider rewriting.
+      // On failover we must replay the original URL/body, not the rewritten
+      // cross-provider URL + converted body (which would re-request a host
+      // that just failed with the wrong shape).
+      const originalInput = input;
+      const originalInit = init;
+
       const modifiedInit: RequestInit = {
         ...init,
         body: result.modifiedBody,
@@ -145,36 +152,48 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
           providerUpstreamBaseUrl,
           targetApiBaseUrl: targetApi.baseUrl,
         });
+        // Ban-guard: refuse the cross-provider hop when it would route a relay
+        // key to an official host (conflicting enterprise policy / empty
+        // override). Fall back to the original request instead of logging only.
         const hostConflict = detectKeyHostConflict({ effectiveBaseUrl, providerUpstreamBaseUrl });
+        // Surface the resolved host + validation result on the decision so
+        // onRouting/telemetry can audit which upstream a route actually reached.
+        result.decision.effectiveBaseUrl = effectiveBaseUrl;
+        result.decision.keyHostBindingValidated = !hostConflict.conflict;
         if (hostConflict.conflict) {
-          asyncLogError(`封号风险: ${hostConflict.reason} (provider=${targetModel.provider})`, "hook");
-        }
+          asyncLogError(
+            `封号风险,跳过跨provider改写: ${hostConflict.reason} (provider=${targetModel.provider})`,
+            "hook",
+          );
+          // Keep input/init at their original values (no cross-provider rewrite).
+          // The request reaches the client's configured provider, not the vendor.
+        } else {
+          // Detect source protocol from original URL
+          sourceProtocol = detectProtocol(url);
+          const targetProtocol = targetApi.protocol;
+          needsProtocolConversion = sourceProtocol !== targetProtocol;
 
-        // Detect source protocol from original URL
-        sourceProtocol = detectProtocol(url);
-        const targetProtocol = targetApi.protocol;
-        needsProtocolConversion = sourceProtocol !== targetProtocol;
+          input = targetApi.protocol === "anthropic"
+            ? `${effectiveBaseUrl}/v1/messages`
+            : `${effectiveBaseUrl}/chat/completions`;
 
-        input = targetApi.protocol === "anthropic"
-          ? `${effectiveBaseUrl}/v1/messages`
-          : `${effectiveBaseUrl}/chat/completions`;
-
-        if (result.decision.apiKey) {
-          const authHeaders: Record<string, string> = { ...headers };
-          if (targetApi.protocol === "anthropic") {
-            delete authHeaders["Authorization"];
-            authHeaders["x-api-key"] = result.decision.apiKey;
-            authHeaders["anthropic-version"] = "2023-06-01";
-          } else {
-            authHeaders["Authorization"] = `Bearer ${result.decision.apiKey}`;
+          if (result.decision.apiKey) {
+            const authHeaders: Record<string, string> = { ...headers };
+            if (targetApi.protocol === "anthropic") {
+              delete authHeaders["Authorization"];
+              authHeaders["x-api-key"] = result.decision.apiKey;
+              authHeaders["anthropic-version"] = "2023-06-01";
+            } else {
+              authHeaders["Authorization"] = `Bearer ${result.decision.apiKey}`;
+            }
+            (modifiedInit.headers as any) = authHeaders;
           }
-          (modifiedInit.headers as any) = authHeaders;
-        }
 
-        // ISSUE-028: Protocol conversion — convert request body when crossing providers
-        if (needsProtocolConversion && sourceProtocol) {
-          const convertedBody = convertRequestBody(sourceProtocol, targetProtocol, result.modifiedBody, targetApi.modelId);
-          modifiedInit.body = convertedBody;
+          // ISSUE-028: Protocol conversion — convert request body when crossing providers
+          if (needsProtocolConversion && sourceProtocol) {
+            const convertedBody = convertRequestBody(sourceProtocol, targetProtocol, result.modifiedBody, targetApi.modelId);
+            modifiedInit.body = convertedBody;
+          }
         }
       }
 
@@ -209,7 +228,8 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
           onlineLearner?.recordSignal(targetModel.id, result.analysis.stepType, "error");
         }
         upstreamCircuit.recordFailure(targetHost);
-        return originalFetch.call(this, input, init);
+        // Replay the ORIGINAL request, not the rewritten cross-provider URL/body.
+        return originalFetch.call(this, originalInput, originalInit);
       }
 
       upstreamCircuit.recordSuccess(targetHost);

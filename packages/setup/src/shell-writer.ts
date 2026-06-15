@@ -95,8 +95,8 @@ export function generatePowerShellFunctions(
   return `${MARKER_START}\n${functions}\n${MARKER_END}`;
 }
 
-export function getPowerShellProfilePath(): string {
-  const homeDir = os.homedir();
+export function getPowerShellProfilePath(homeDirOverride?: string): string {
+  const homeDir = homeDirOverride ?? os.homedir();
   const ps7Path = path.join(
     homeDir, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1"
   );
@@ -342,6 +342,7 @@ export function writeRestoredBaseUrls(
 ): string[] {
   const restored: string[] = [];
   const lines: string[] = [];
+  const noValueProviders: string[] = [];
   for (const t of tools) {
     if (t.type !== "cli" || !t.envVar || !t.provider) continue;
     const url = capturedUrls[t.provider];
@@ -353,31 +354,47 @@ export function writeRestoredBaseUrls(
       );
       restored.push(t.provider);
     } else {
-      // No captured URL — clear any leftover proxy assignment
-      lines.push(
-        platform === "windows-native"
-          ? `Remove-Item Env:\\${t.envVar} -ErrorAction SilentlyContinue`
-          : `unset ${t.envVar}`
-      );
+      // No captured URL: do NOT emit unset/Remove-Item. Writing `unset` while
+      // the user's own real upstream URL may still be in the profile would both
+      // clobber it AND contradict it (export + unset in the same file). The
+      // only thing `init` added for this provider was a localhost proxy export;
+      // stripping that (below) is sufficient. Remember the provider so the
+      // cleanup pass can still remove a leftover localhost line.
+      noValueProviders.push(t.provider);
     }
   }
-  if (lines.length === 0) return restored;
   const dir = path.dirname(rcPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   let existing = fs.existsSync(rcPath) ? fs.readFileSync(rcPath, "utf-8") : "";
-  // Idempotency: strip any prior assignment for these vars so re-running restore
-  // does not duplicate export/unset lines.
+  // Idempotency: avoid duplicating export lines across restore runs.
+  //
+  // Two cases per provider:
+  //  (a) capturedUrls has a value → we will write a fresh export, so strip ALL
+  //      prior assignments for this var (any prior value is stale takeover /
+  //      restore output that the new line supersedes).
+  //  (b) capturedUrls has NO value → we write nothing. Strip ONLY the localhost
+  //      proxy-takeover export (init's artifact) + any prior restore-generated
+  //      unset/Remove-Item line. A hand-written real upstream URL is preserved.
   for (const t of tools) {
     if (!t.envVar) continue;
     const v = escapeRegex(t.envVar);
-    existing = existing
-      .replace(new RegExp(`^export ${v}=.*$\\n?`, "gm"), "")
-      .replace(new RegExp(`^unset ${v}\\b.*$\\n?`, "gm"), "")
-      .replace(new RegExp(`^\\$env:${v}\\s*=.*$\\n?`, "gm"), "")
-      .replace(new RegExp(`^Remove-Item Env:\\\\${v}.*$\\n?`, "gm"), "");
+    const hasValue = typeof capturedUrls[t.provider ?? ""] === "string";
+    if (hasValue) {
+      existing = existing
+        .replace(new RegExp(`^export ${v}=.*$\\n?`, "gm"), "")
+        .replace(new RegExp(`^unset ${v}\\b.*$\\n?`, "gm"), "")
+        .replace(new RegExp(`^\\$env:${v}\\s*=.*$\\n?`, "gm"), "")
+        .replace(new RegExp(`^Remove-Item Env:\\\\${v}.*$\\n?`, "gm"), "");
+    } else {
+      existing = existing
+        .replace(new RegExp(`^export ${v}=["'](http://(?:localhost|127\\.0\\.0\\.1):[^"']*)["'].*$\\n?`, "gm"), "")
+        .replace(new RegExp(`^unset ${v}\\b.*$\\n?`, "gm"), "")
+        .replace(new RegExp(`^\\$env:${v}\\s*=\\s*["'](http://(?:localhost|127\\.0\\.0\\.1):[^"']*)["'].*$\\n?`, "gm"), "")
+        .replace(new RegExp(`^Remove-Item Env:\\\\${v}.*$\\n?`, "gm"), "");
+    }
   }
   const base = existing.replace(/\n{3,}/g, "\n\n").replace(/\n+$/, "");
-  atomicWriteFileSync(rcPath, `${base}\n\n${lines.join("\n")}\n`);
+  atomicWriteFileSync(rcPath, lines.length > 0 ? `${base}\n\n${lines.join("\n")}\n` : `${base}\n`);
   return restored;
 }
 
@@ -394,7 +411,7 @@ export function restoreShellProfile(
 ): { rcPath: string; platform: Platform; restored: string[] } {
   const platform = platformOverride ?? detectPlatform();
   if (platform === "windows-native") {
-    const rcPath = getPowerShellProfilePath();
+    const rcPath = getPowerShellProfilePath(homeDirOverride);
     const dir = path.dirname(rcPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     if (fs.existsSync(rcPath)) {
@@ -408,11 +425,23 @@ export function restoreShellProfile(
     return { rcPath, platform, restored };
   }
 
-  // POSIX: clean markers from candidate rc files, write to the first existing.
+  // POSIX: clean markers from candidate rc files. Each rc that existed (and was
+  // therefore a takeover target whose BASE_URL we overwrote) must get its
+  // restored exports written back — previously we only wrote to the first
+  // existing rc, leaving the second with markers removed but URLs still clobbered.
   const homeDir = homeDirOverride ?? os.homedir();
+  const candidateRcs = [path.join(homeDir, ".zshrc"), path.join(homeDir, ".bashrc")];
+  const touchedRcs = candidateRcs.filter((p) => fs.existsSync(p));
+  // cleanShellMarkers strips marker blocks from all candidates in one pass.
   cleanShellMarkers(undefined, homeDir);
-  let rcPath = path.join(homeDir, ".zshrc");
-  if (!fs.existsSync(rcPath)) rcPath = path.join(homeDir, ".bashrc");
-  const restored = writeRestoredBaseUrls(tools, capturedUrls, rcPath, platform);
+  // Write restored URLs into every rc that existed. If none existed, fall back
+  // to .bashrc so restore is still observable (mirrors writeShellConfig's fallback).
+  const targets = touchedRcs.length > 0 ? touchedRcs : [path.join(homeDir, ".bashrc")];
+  let restored: string[] = [];
+  for (const rc of targets) {
+    const r = writeRestoredBaseUrls(tools, capturedUrls, rc, platform);
+    if (r.length > 0) restored = r; // same set per rc; keep the last non-empty
+  }
+  const rcPath = targets[0];
   return { rcPath, platform, restored };
 }

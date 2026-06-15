@@ -58,37 +58,49 @@ export function applyKeyPermissions(keysPath: string = getKeysPath()): void {
   }
 }
 
-/** In-process key cache state (mtime-keyed). */
+/** In-process key cache state (mtime+size keyed). */
 let cachedKeys: Record<string, string> | null = null;
 let cachedMtime: number | null = null;
+let cachedSize: number | null = null;
 
 /** Drop the in-process cache so the next read reloads from disk. */
 export function invalidateKeyCache(): void {
   cachedKeys = null;
   cachedMtime = null;
+  cachedSize = null;
 }
 
 /**
- * Load keys.json, re-reading whenever its mtime changes.
+ * Load keys.json, re-reading whenever its mtime OR size changes.
  *
  * The proxy is a long-lived daemon while the CLI is a short-lived process;
- * mtime probing on each call keeps the daemon in sync with CLI writes without
- * any IPC. stat() per request is cheap (syscall, no file read on cache hit).
+ * probing on each call keeps the daemon in sync with CLI writes without any
+ * IPC. stat() per request is cheap (syscall, no file read on cache hit).
+ *
+ * Both mtime AND size are tracked: some filesystems (FAT32, certain network
+ * shares) have second-granularity mtime, so two writes within the same second
+ * can share an mtime while the content differs. A size change in that window
+ * still busts the cache; pairing the two covers the common "same mtime,
+ * different content" case without reading the file.
  */
 export function loadKeysFromDisk(force = false): Record<string, string> {
   const keysPath = getKeysPath();
   let mtime: number;
+  let size: number;
   try {
-    mtime = fs.statSync(keysPath).mtimeMs;
+    const stat = fs.statSync(keysPath);
+    mtime = stat.mtimeMs;
+    size = stat.size;
   } catch {
     // File missing. Preserve a prior cache unless forced; else empty.
     if (!force && cachedKeys !== null) return cachedKeys;
     cachedKeys = {};
     cachedMtime = null;
+    cachedSize = null;
     return cachedKeys;
   }
 
-  if (!force && cachedKeys !== null && cachedMtime === mtime) {
+  if (!force && cachedKeys !== null && cachedMtime === mtime && cachedSize === size) {
     return cachedKeys;
   }
 
@@ -100,5 +112,6 @@ export function loadKeysFromDisk(force = false): Record<string, string> {
     cachedKeys = {};
   }
   cachedMtime = mtime;
+  cachedSize = size;
   return cachedKeys!;
 }

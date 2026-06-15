@@ -29,6 +29,34 @@ describe("resolveEffectiveBaseUrl", () => {
       }),
     ).toBe("https://api.anthropic.com");
   });
+
+  it("treats empty-string enterpriseBaseUrl as unset (not the empty URL)", () => {
+    expect(
+      resolveEffectiveBaseUrl({
+        enterpriseBaseUrl: "",
+        providerUpstreamBaseUrl: "https://relay.example.com",
+        targetApiBaseUrl: "https://api.anthropic.com",
+      }),
+    ).toBe("https://relay.example.com");
+  });
+
+  it("treats whitespace-only enterpriseBaseUrl as unset", () => {
+    expect(
+      resolveEffectiveBaseUrl({
+        enterpriseBaseUrl: "   ",
+        targetApiBaseUrl: "https://api.anthropic.com",
+      }),
+    ).toBe("https://api.anthropic.com");
+  });
+
+  it("treats empty-string providerUpstreamBaseUrl as unset", () => {
+    expect(
+      resolveEffectiveBaseUrl({
+        providerUpstreamBaseUrl: "",
+        targetApiBaseUrl: "https://api.anthropic.com",
+      }),
+    ).toBe("https://api.anthropic.com");
+  });
 });
 
 describe("isOfficialHost", () => {
@@ -71,6 +99,25 @@ describe("detectKeyHostConflict", () => {
     expect(
       detectKeyHostConflict({
         effectiveBaseUrl: "https://api.openai.com",
+      }).conflict,
+    ).toBe(false);
+  });
+
+  it("flags conflict when providerUpstreamBaseUrl is empty string (explicit config error)", () => {
+    // "" is an explicit override, not "no relay" — surface it as conflict
+    // rather than silently routing a non-official key to the official host.
+    expect(
+      detectKeyHostConflict({
+        effectiveBaseUrl: "https://api.anthropic.com",
+        providerUpstreamBaseUrl: "",
+      }).conflict,
+    ).toBe(true);
+  });
+
+  it("treats undefined providerUpstreamBaseUrl as no-relay (no false conflict)", () => {
+    expect(
+      detectKeyHostConflict({
+        effectiveBaseUrl: "https://api.anthropic.com",
       }).conflict,
     ).toBe(false);
   });

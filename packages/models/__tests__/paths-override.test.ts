@@ -45,4 +45,19 @@ describe("paths SSOT — AGENTFARE_HOME override (refactor/paths-ssot)", () => {
     expect(getKeysPath()).toBe(path.join(process.env.AGENTFARE_HOME, "keys.json"));
     expect(getKeysPath()).toMatch(/keys\.json$/);
   });
+
+  it("falls back to default when AGENTFARE_HOME is empty string (no relative paths)", () => {
+    process.env.AGENTFARE_HOME = "";
+    const expected = path.join(os.homedir(), ".agentfare");
+    expect(getBaseDir()).toBe(expected);
+    // Empty override must NOT collapse derived paths to relative ones.
+    expect(getConfigPath()).toBe(path.join(expected, "config.json"));
+    expect(getKeysPath()).toBe(path.join(expected, "keys.json"));
+  });
+
+  it("falls back to default when AGENTFARE_HOME is whitespace-only", () => {
+    process.env.AGENTFARE_HOME = "   ";
+    const expected = path.join(os.homedir(), ".agentfare");
+    expect(getBaseDir()).toBe(expected);
+  });
 });

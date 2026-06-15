@@ -41,7 +41,7 @@ export const restoreCommand = new Command("restore")
     console.log("已还原 BASE_URL（恢复直连 provider）:");
     for (const t of cliTools) {
       if (!t.envVar) continue;
-      const target = capturedUrls[t.provider!] ?? "(unset — 清理 proxy 残留)";
+      const target = capturedUrls[t.provider] ?? "(无原始 URL — 仅清理 proxy localhost 行)";
       console.log(`  ${t.envVar} → ${target}`);
     }
     if (restored.length > 0) {
@@ -63,8 +63,13 @@ export const restoreCommand = new Command("restore")
 /**
  * Read providers[*].upstreamUrl from config.json (written by `init`'s
  * saveUpstreamUrls). Returns {} if the file or field is absent.
+ *
+ * Provider keys here are the SAME names detector.ts emits as DetectedTool.provider
+ * and init's saveUpstreamUrls writes — so restore can index captured URLs by
+ * `t.provider` directly. Exported so the read path can be behavior-tested in
+ * isolation (set AGENTFARE_HOME, write config.json, assert the parsed map).
  */
-function loadCapturedUpstreamUrls(): Record<string, string> {
+export function loadCapturedUpstreamUrls(): Record<string, string> {
   const configPath = getConfigPath();
   if (!fs.existsSync(configPath)) return {};
   try {
@@ -74,8 +79,10 @@ function loadCapturedUpstreamUrls(): Record<string, string> {
     if (providers && typeof providers === "object") {
       for (const [provider, cfg] of Object.entries(providers)) {
         const url = (cfg as any)?.upstreamUrl;
-        if (typeof url === "string" && url.length > 0) {
-          result[provider] = url;
+        // trim(): a whitespace-only upstreamUrl is not a valid target and would
+        // otherwise pollute the restored export (`export VAR="   "`).
+        if (typeof url === "string" && url.trim().length > 0) {
+          result[provider] = url.trim();
         }
       }
     }

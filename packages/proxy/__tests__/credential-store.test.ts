@@ -79,4 +79,26 @@ describe("credential-store", () => {
     // owner-only: rw-------
     expect(stat.mode & 0o777).toBe(0o600);
   });
+
+  // M5: mtime alone is not a reliable cache key on filesystems with coarse
+  // mtime granularity (FAT32, some network shares). Two writes within the same
+  // mtime tick must still bust the cache when the file size changed. We pin
+  // mtime to a fixed epoch (0) on BOTH writes so it is byte-identical, then
+  // vary content length — only a size-aware cache key detects the change.
+  it("re-reads when the file size changes even if mtime is identical (M5)", () => {
+    const EPOCH = new Date(0);
+    saveKeys({ openai: "sk-v1" });
+    fs.utimesSync(getKeysPath(), EPOCH, EPOCH); // pin mtime to 0
+    expect(loadKeysFromDisk().openai).toBe("sk-v1"); // caches {mtime:0, size:S1}
+    expect(fs.statSync(getKeysPath()).mtimeMs).toBe(0);
+
+    // Rewrite with LONGER content (size grows) and RE-PIN mtime to 0.
+    fs.writeFileSync(getKeysPath(), JSON.stringify({ openai: "sk-v2-much-longer-key-value" }));
+    fs.utimesSync(getKeysPath(), EPOCH, EPOCH);
+    expect(fs.statSync(getKeysPath()).mtimeMs).toBe(0); // mtime identical to cache
+
+    // mtime unchanged, size grew → must still re-read. mtime-only caching would
+    // wrongly return the stale cached sk-v1 here.
+    expect(loadKeysFromDisk().openai).toBe("sk-v2-much-longer-key-value");
+  });
 });

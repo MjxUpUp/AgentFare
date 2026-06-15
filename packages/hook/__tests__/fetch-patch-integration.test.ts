@@ -150,6 +150,12 @@ describe("installFetchPatch — integration", () => {
     // Other fields should still be present
     expect(decision.crossProviderMode).toBe("opt-in");
     expect(decision.providerSwitched).toBe(true);
+    // M1: the transport layer fills the resolved upstream host + validation
+    // flag so onRouting/telemetry can audit which host a route reached. With no
+    // relay/enterprise override, effectiveBaseUrl falls back to the official
+    // api.baseUrl and keyHostBindingValidated is true (no relay mismatch).
+    expect(decision.effectiveBaseUrl).toBe("https://api.openai.com/v1");
+    expect(decision.keyHostBindingValidated).toBe(true);
   });
 
   it("body is not a string (e.g., ReadableStream simulation) → graceful fallback (ISSUE-022 regression)", async () => {

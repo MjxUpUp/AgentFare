@@ -190,39 +190,56 @@ async function handleRequest(
         providerUpstreamBaseUrl,
         targetApiBaseUrl: targetApi.baseUrl,
       });
-      // Ban-guard: warn if a relay-configured provider is still routed to an
-      // official host. resolveEffectiveBaseUrl already prefers the relay, so this
-      // only fires under a conflicting enterprise policy.
+      // Ban-guard: if a relay-configured provider would still be routed to an
+      // official host (e.g. a conflicting enterprise policy overriding the
+      // relay), refuse the cross-provider hop and fall back to the ORIGINAL
+      // request — routing the relay key to the official endpoint risks a ban.
+      // resolveEffectiveBaseUrl already prefers the relay, so conflict only
+      // fires under a conflicting enterprise policy or an empty-string override.
       const hostConflict = detectKeyHostConflict({ effectiveBaseUrl, providerUpstreamBaseUrl });
+      // Surface the resolved host + validation result on the decision so
+      // onRouting/telemetry can audit which upstream a route actually reached.
+      result.decision.effectiveBaseUrl = effectiveBaseUrl;
+      result.decision.keyHostBindingValidated = !hostConflict.conflict;
       if (hostConflict.conflict) {
-        asyncLogError(`封号风险: ${hostConflict.reason} (provider=${targetModel.provider})`, "proxy");
-      }
-      targetUrl = targetApi.protocol === "anthropic"
-        ? `${effectiveBaseUrl}/v1/messages`
-        : `${effectiveBaseUrl}/chat/completions`;
-      targetProtocol = targetApi.protocol;
-      needsProtocolConversion = sourceProtocol !== targetProtocol;
-      targetProvider = targetModel.provider;
-
-      // Resolve API key for target provider
-      const apiKey = result.decision.apiKey ?? resolveApiKey(targetModel.provider, headers);
-      if (apiKey) {
-        targetHeaders = { ...headers, ...buildAuthHeaders(targetModel.provider, apiKey, targetApi.protocol) };
-        // Remove conflicting auth headers
-        if (targetApi.protocol === "anthropic") {
-          delete targetHeaders["Authorization"];
-        } else {
-          delete targetHeaders["x-api-key"];
-        }
-      } else {
-        targetHeaders = { ...headers };
-      }
-
-      // Convert request body if protocol changes (using shared pipeline)
-      if (needsProtocolConversion) {
-        targetBodyStr = convertRequestBody(sourceProtocol, targetProtocol, result.modifiedBody, targetApi.modelId);
-      } else {
+        asyncLogError(
+          `封号风险,降级到原始请求: ${hostConflict.reason} (provider=${targetModel.provider})`,
+          "proxy",
+        );
+        // Abort cross-provider routing: keep the original URL/body/headers so
+        // the request reaches the client's configured provider, not the vendor.
+        targetUrl = virtualUrl;
         targetBodyStr = result.modifiedBody;
+        targetHeaders = { ...headers };
+        // targetProtocol / needsProtocolConversion stay at same-provider defaults
+      } else {
+        targetUrl = targetApi.protocol === "anthropic"
+          ? `${effectiveBaseUrl}/v1/messages`
+          : `${effectiveBaseUrl}/chat/completions`;
+        targetProtocol = targetApi.protocol;
+        needsProtocolConversion = sourceProtocol !== targetProtocol;
+        targetProvider = targetModel.provider;
+
+        // Resolve API key for target provider
+        const apiKey = result.decision.apiKey ?? resolveApiKey(targetModel.provider, headers);
+        if (apiKey) {
+          targetHeaders = { ...headers, ...buildAuthHeaders(targetModel.provider, apiKey, targetApi.protocol) };
+          // Remove conflicting auth headers
+          if (targetApi.protocol === "anthropic") {
+            delete targetHeaders["Authorization"];
+          } else {
+            delete targetHeaders["x-api-key"];
+          }
+        } else {
+          targetHeaders = { ...headers };
+        }
+
+        // Convert request body if protocol changes (using shared pipeline)
+        if (needsProtocolConversion) {
+          targetBodyStr = convertRequestBody(sourceProtocol, targetProtocol, result.modifiedBody, targetApi.modelId);
+        } else {
+          targetBodyStr = result.modifiedBody;
+        }
       }
     } else {
       // Same-provider routing: just change the model in the body
@@ -285,8 +302,22 @@ async function handleRequest(
     }
     if (upstreamRes) upstreamRes.resume(); // drain the failed response
     upstreamCircuit.recordFailure(targetHost);
-    // Fallback to the original (un-routed) request
-    const fallbackRes = await forwardRequest(virtualUrl, bodyStr, headers, options.resolveUpstream);
+    // Fallback to the original (un-routed) request. If the fallback itself
+    // fails, return a structured error instead of leaking internals via 502 +
+    // String(err) (which could expose upstream URLs / stack traces).
+    let fallbackRes: nodeHttp.IncomingMessage;
+    try {
+      fallbackRes = await forwardRequest(virtualUrl, bodyStr, headers, options.resolveUpstream);
+    } catch (fallbackErr) {
+      asyncLogError(`fallback 也失败: ${fallbackErr}`, "proxy");
+      if (!res.headersSent) {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "upstream_unavailable" }));
+      } else {
+        res.destroy();
+      }
+      return;
+    }
     pipeResponse(fallbackRes, res, targetProtocol, isStreaming, originalModel, undefined, options, result, sourceProtocol, targetProtocol);
     return;
   }

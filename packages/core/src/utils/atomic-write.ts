@@ -14,18 +14,23 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 export function atomicWriteFileSync(targetPath: string, data: string): void {
-  // pid + timestamp + random avoids collisions across concurrent writes
-  const tmpPath = path.join(
-    os.tmpdir(),
-    `.agentfare-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.tmp`,
-  );
+  // Tmp lives in the SAME directory as the target — only same-directory rename
+  // is atomic on POSIX; tmpdir() can be on a different volume (EXDEV).
+  const tmpPath = `${targetPath}.${process.pid}.${Date.now()}.${Math.floor(Math.random() * 1e6)}.tmp`;
   fs.writeFileSync(tmpPath, data, "utf-8");
   try {
-    fs.renameSync(tmpPath, targetPath);
-  } catch {
-    // Cross-device rename (e.g. Windows %TMP% on C: → home on D:): copy + unlink.
-    // rename across volumes throws EXDEV on POSIX and an error on Windows.
-    fs.copyFileSync(tmpPath, targetPath);
-    fs.unlinkSync(tmpPath);
+    try {
+      fs.renameSync(tmpPath, targetPath);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      // Only cross-device / permission errors are recoverable via copy+unlink.
+      if (code !== "EXDEV" && code !== "EPERM" && code !== "EACCES") throw e;
+      fs.copyFileSync(tmpPath, targetPath);
+    }
+  } finally {
+    // Guarantee tmp cleanup whether rename succeeded (tmp gone), copy ran,
+    // or any step threw. Best-effort: tmp may already be removed.
+    try { fs.unlinkSync(tmpPath); } catch { /* already moved / cleaned */ }
   }
 }

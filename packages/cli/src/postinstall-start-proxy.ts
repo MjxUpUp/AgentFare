@@ -16,8 +16,20 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 
-// Install-lifecycle script — keep self-contained, mirror getBaseDir() inline.
-const AGENTFARE_DIR = process.env.AGENTFARE_HOME ?? path.join(os.homedir(), ".agentfare");
+// Install-lifecycle script. At postinstall time deps ARE on disk, so prefer the
+// SSOT getBaseDir() from @agentfare/models. If the require fails (rare install
+// edge), fall back to an inline mirror with the SAME empty-string handling so
+// behavior never diverges from the SSOT. (preinstall cannot do this — deps are
+// not yet installed there — so it mirrors inline and is guarded by a drift test.)
+function resolveAgentFareDir(): string {
+  try {
+    const mod = require("@agentfare/models");
+    if (mod && typeof mod.getBaseDir === "function") return mod.getBaseDir();
+  } catch { /* deps not resolvable — fall back to inline mirror */ }
+  const override = process.env.AGENTFARE_HOME;
+  return override && override.trim() ? override : path.join(os.homedir(), ".agentfare");
+}
+const AGENTFARE_DIR = resolveAgentFareDir();
 const STATE_FILE = path.join(AGENTFARE_DIR, "proxy.json");
 const RESTART_MARKER = path.join(AGENTFARE_DIR, ".needs-restart");
 const DEFAULT_PORT = 3456;

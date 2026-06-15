@@ -32,7 +32,10 @@ export interface EffectiveBaseUrlInput {
  * Priority: enterprise > provider relay upstream > official default.
  */
 export function resolveEffectiveBaseUrl(opts: EffectiveBaseUrlInput): string {
-  return opts.enterpriseBaseUrl ?? opts.providerUpstreamBaseUrl ?? opts.targetApiBaseUrl;
+  // Empty strings are treated as unset (a user clearing an override must not
+  // collapse the URL to "" → downstream path concatenation crashes). trim()
+  // also tolerates accidental whitespace in config files.
+  return opts.enterpriseBaseUrl?.trim() || opts.providerUpstreamBaseUrl?.trim() || opts.targetApiBaseUrl;
 }
 
 export interface KeyHostConflictInput {
@@ -56,10 +59,19 @@ export interface KeyHostConflictResult {
  */
 export function detectKeyHostConflict(opts: KeyHostConflictInput): KeyHostConflictResult {
   const effectiveOfficial = isOfficialHost(opts.effectiveBaseUrl);
-  // No relay configured → the provider's key is an official key → no mismatch possible.
-  const providerOfficial = opts.providerUpstreamBaseUrl
-    ? isOfficialHost(opts.providerUpstreamBaseUrl)
-    : true;
+  const relay = opts.providerUpstreamBaseUrl;
+  // `undefined` = no relay configured → key is official → no mismatch possible.
+  // An explicit non-undefined value (incl. empty/whitespace) = user set an
+  // override → treat as a non-official relay so a config error still surfaces
+  // as conflict rather than silently routing a relay key to the official host.
+  let providerOfficial: boolean;
+  if (relay === undefined) {
+    providerOfficial = true;
+  } else if (relay.trim() === "") {
+    providerOfficial = false; // explicit empty override = config error
+  } else {
+    providerOfficial = isOfficialHost(relay);
+  }
   if (!providerOfficial && effectiveOfficial) {
     return {
       conflict: true,

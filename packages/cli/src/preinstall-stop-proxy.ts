@@ -15,23 +15,34 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 
 // Runs at npm `preinstall` — deps not on disk yet, cannot import @agentfare/models.
-// Mirrors getBaseDir() (packages/models/src/paths.ts) inline to respect AGENTFARE_HOME.
-const AGENTFARE_DIR = process.env.AGENTFARE_HOME ?? path.join(os.homedir(), ".agentfare");
-const STATE_FILE = path.join(AGENTFARE_DIR, "proxy.json");
-const RESTART_MARKER = path.join(AGENTFARE_DIR, ".needs-restart");
+// Mirrors getBaseDir() (packages/models/src/paths.ts) inline to respect
+// AGENTFARE_HOME. MUST stay byte-for-byte consistent with the SSOT: a drift
+// test (packages/cli/__tests__/install-paths-drift.test.ts) imports this and
+// asserts equality with getBaseDir() across override values.
+// Empty/whitespace AGENTFARE_HOME is treated as unset (matches getBaseDir).
+export function resolveAgentFareDir(): string {
+  const HOME_OVERRIDE = process.env.AGENTFARE_HOME;
+  return HOME_OVERRIDE && HOME_OVERRIDE.trim()
+    ? HOME_OVERRIDE
+    : path.join(os.homedir(), ".agentfare");
+}
 
-function readState(): any | null {
+function readState(stateFile: string): any | null {
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+    return JSON.parse(fs.readFileSync(stateFile, "utf-8"));
   } catch {
     return null;
   }
 }
 
 function stopProxy(): void {
+  const AGENTFARE_DIR = resolveAgentFareDir();
+  const STATE_FILE = path.join(AGENTFARE_DIR, "proxy.json");
+  const RESTART_MARKER = path.join(AGENTFARE_DIR, ".needs-restart");
+
   if (!fs.existsSync(STATE_FILE)) return;
 
-  const state = readState();
+  const state = readState(STATE_FILE);
   if (!state?.pid) return;
 
   // Save port for postinstall restart
@@ -58,4 +69,8 @@ function stopProxy(): void {
   }
 }
 
-stopProxy();
+// Only act when run directly by npm (node dist/preinstall-stop-proxy.js), not
+// when imported by the drift test.
+if (require.main === module) {
+  stopProxy();
+}
