@@ -20,31 +20,35 @@ npx agentfare cost
 
 ## 架构
 
+默认 **proxy 模式**（本地常驻代理，接管全部请求；`agentfare init` 默认走此模式）：
+
 ```
-用户代码 (Claude / Codex / 任意 OpenAI 兼容客户端)
+Claude Code / Codex / 任意 OpenAI·Anthropic 兼容客户端
+    │  *_BASE_URL → http://localhost:8787/{anthropic|openai|...}
+    ▼
+@agentfare/proxy ─── HTTP 代理 daemon：路由转发 + 协议转换 + failover/熔断 + 成本追踪
     │
     ▼
-agentfare/hook ─── fetch 拦截 + 协议转换 (OpenAI ↔ Anthropic)
+@agentfare/core ─── 路由决策 + 在线学习
     │
     ▼
-agentfare/core ─── 路由决策 + 成本追踪 + 在线学习
-    │
-    ▼
-LLM Provider (OpenAI / Anthropic / Google / DeepSeek / ...)
+LLM Provider (OpenAI / Anthropic / DeepSeek / Zhipu / Alibaba / Moonshot / Xiaomi)
 ```
+
+> Legacy **hook 模式**（`agentfare init --mode hook`）：`@agentfare/hook` 通过 `fetch` 拦截实现协议转换与 failover，无独立 daemon。
 
 ## 包结构
 
 | 包 | 说明 |
 |---|---|
-| `@agentfare/cli` | 命令行工具 |
+| `@agentfare/cli` | 命令行工具：`init` / `cost` / `config` / `models` / `optimize` / `proxy` / `restore` |
+| `@agentfare/proxy` | HTTP 代理 daemon（默认模式）：路由转发、failover/熔断、成本追踪 |
 | `@agentfare/core` | 路由引擎、成本追踪、优化器 |
-| `@agentfare/hook` | fetch 拦截、协议转换 |
+| `@agentfare/hook` | `fetch` 拦截、协议转换、failover（legacy hook 模式） |
 | `@agentfare/models` | 模型注册表、定价数据 |
-| `agentfare/loader` | Node.js `--require` 预加载器 |
+| `@agentfare/loader` | Node.js `--require` 预加载器 |
 | `@agentfare/setup` | 环境检测、Shell 配置 |
 | `@agentfare/mcp-server` | MCP 协议服务 |
-| `@agentfare/langchain` | LangChain 回调集成 (alpha) |
 
 ## 开发
 
