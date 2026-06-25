@@ -22,9 +22,10 @@ function extractKeyFromHeaders(headers: Record<string, string>): string | undefi
   const apiKey = headers["x-api-key"];
   if (apiKey) return apiKey;
 
-  // Check Authorization: Bearer ...
+  // Check Authorization: Bearer ... (scheme is case-insensitive per RFC 7235,
+  // so accept "bearer"/"BEARER"/etc.; the credential itself is case-sensitive).
   const auth = headers["authorization"];
-  if (auth?.startsWith("Bearer ")) {
+  if (auth && auth.toLowerCase().startsWith("bearer ")) {
     return auth.slice(7).trim();
   }
 

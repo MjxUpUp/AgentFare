@@ -5,7 +5,9 @@ import {
   epsilonLucbSearch,
   armEliminationSearch,
   hillClimbingSearch,
+  DEFAULT_SEARCH_CONFIG,
 } from "@agentfare/core";
+import type { SearchConfig } from "@agentfare/core";
 import { ModelRegistry } from "@agentfare/models";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -30,6 +32,19 @@ export const optimizeCommand = new Command("optimize")
     const yaml = fs.readFileSync(opts.pipeline, "utf-8");
     const pipeline = parsePipelineYAML(yaml);
 
+    // Parse and validate --max-evals (previously declared but never forwarded
+    // to the search functions, so the flag silently did nothing).
+    const maxEvals = parseInt(opts.maxEvals, 10);
+    if (!Number.isFinite(maxEvals) || maxEvals <= 0) {
+      console.error(`--max-evals 必须是正整数，收到: ${opts.maxEvals}`);
+      process.exit(1);
+    }
+    const config: SearchConfig = {
+      ...DEFAULT_SEARCH_CONFIG,
+      algorithm: opts.algorithm as SearchConfig["algorithm"],
+      maxEvaluations: maxEvals,
+    };
+
     const registry = new ModelRegistry();
     const costFn = (combo: Record<string, string>) =>
       Object.values(combo).reduce((sum, m) => {
@@ -41,17 +56,17 @@ export const optimizeCommand = new Command("optimize")
     let results;
     switch (opts.algorithm) {
       case "brute_force":
-        results = bruteForceSearch(pipeline, costFn);
+        results = bruteForceSearch(pipeline, costFn, undefined, config);
         break;
       case "arm_elimination":
-        results = armEliminationSearch(pipeline, costFn);
+        results = armEliminationSearch(pipeline, costFn, undefined, config);
         break;
       case "hill_climbing":
-        results = hillClimbingSearch(pipeline, costFn);
+        results = hillClimbingSearch(pipeline, costFn, undefined, config);
         break;
       case "epsilon_lucb":
       default:
-        results = epsilonLucbSearch(pipeline, costFn);
+        results = epsilonLucbSearch(pipeline, costFn, undefined, config);
         break;
     }
 

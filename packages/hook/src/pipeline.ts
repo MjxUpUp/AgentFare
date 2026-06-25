@@ -13,7 +13,7 @@ import type { ModelRegistry, ModelEntry } from "@agentfare/models";
 import { getErrorLogPath } from "@agentfare/models";
 import type { SSEProtocolConverter } from "./response-handler.js";
 import { createSSEStreamConverter } from "./protocol/openai-to-anthropic-sse.js";
-import { convertAnthropicSSEToOpenAI } from "./protocol/sse-transform.js";
+import { createAnthropicToOpenAISSEConverter } from "./protocol/sse-transform.js";
 import { convertOpenAIToAnthropicRequest } from "./protocol/openai-to-anthropic.js";
 import { convertAnthropicToOpenAIRequest } from "./protocol/anthropic-to-openai-request.js";
 
@@ -163,8 +163,12 @@ export function createSSEConverterForDirection(
     const sseConv = createSSEStreamConverter();
     return (chunk: string) => sseConv.convert(chunk, modelName);
   } else if (sourceProtocol === "openai" && targetProtocol === "anthropic") {
-    // Upstream sends Anthropic SSE → convert to OpenAI SSE for client
-    return (chunk: string) => convertAnthropicSSEToOpenAI(chunk, modelName);
+    // Upstream sends Anthropic SSE → convert to OpenAI SSE for client.
+    // Stateful converter is required: a streaming tool_use spans multiple
+    // events (content_block_start + input_json_delta*s) and OpenAI needs a
+    // stable per-call index across them — the stateless converter drops it.
+    const conv = createAnthropicToOpenAISSEConverter(modelName);
+    return (chunk: string) => conv.convert(chunk);
   }
 
   return undefined;

@@ -37,7 +37,9 @@ describe("setup module — integration", () => {
     // Content should have the shell function
     expect(content).toContain("claude()");
     expect(content).toContain("NODE_OPTIONS");
-    expect(content).toContain(".agentfare/loader.js");
+    expect(content).toContain("/loader.js");
+    // Respect AGENTFARE_HOME override (path SSOT), not a hardcoded ~/.agentfare.
+    expect(content).toContain("AGENTFARE_HOME");
   });
 
   it("generateShellFunctions with multiple tools includes all tools", () => {

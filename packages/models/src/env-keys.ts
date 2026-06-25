@@ -51,7 +51,7 @@ export function isOfficialHost(url: string): boolean {
     host = new URL(url).hostname;
   } catch {
     // Not a parseable URL — treat the raw string as a hostname.
-    host = url.replace(/^[./]+/, "").split("/")[0];
+    host = url.replace(/^[./]+/, "").split("/")[0].toLowerCase();
   }
   for (const hosts of Object.values(PROVIDER_OFFICIAL_HOSTS)) {
     if (hosts.includes(host)) return true;

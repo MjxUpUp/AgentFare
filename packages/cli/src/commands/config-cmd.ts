@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getConfigPath } from "@agentfare/models";
 import { saveKeys } from "@agentfare/proxy";
+import { atomicWriteFileSync } from "@agentfare/core";
 
 export const configCommand = new Command("config").description(
   "管理配置"
@@ -26,7 +27,7 @@ configCommand
       config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     setNestedValue(config, key, value);
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    atomicWriteFileSync(configPath, JSON.stringify(config, null, 2));
     console.log(`set ${key}`);
   });
 

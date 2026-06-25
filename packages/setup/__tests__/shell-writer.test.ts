@@ -23,7 +23,7 @@ describe("generateShellFunctions", () => {
     ]);
     expect(result).toContain("codex()");
     expect(result).toContain("claude()");
-    expect(result).toContain("$HOME/.agentfare/loader.js");
+    expect(result).toContain("${AGENTFARE_HOME:-$HOME/.agentfare}/loader.js");
   });
 
   it("should wrap output in markers", () => {

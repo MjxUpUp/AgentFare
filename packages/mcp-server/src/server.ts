@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { TrackingDatabase, generateReport, parsePipelineYAML, bruteForceSearch } from "@agentfare/core";
 import { ModelRegistry, getDbPath } from "@agentfare/models";
+import packageJson from "../package.json";
 
 export interface ServerDeps {
   db: TrackingDatabase;
@@ -22,7 +23,9 @@ export function createServer(deps?: Partial<ServerDeps>): McpServer {
     process.on("exit", () => { try { db.close(); } catch {} });
   }
 
-  const server = new McpServer({ name: "agentfare", version: "0.1.0" });
+  // Version comes from package.json so it stays in sync across releases
+  // instead of drifting from a hardcoded literal.
+  const server = new McpServer({ name: "agentfare", version: packageJson.version });
 
   server.tool("get_cost_report", "获取 AgentFare 成本报告", { timeRange: z.string().optional().describe("时间范围 (1d, 7d, 30d)") }, async (params) => {
     const report = generateReport(db, params.timeRange);

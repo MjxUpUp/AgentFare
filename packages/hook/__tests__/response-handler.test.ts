@@ -175,4 +175,52 @@ describe("createStreamingResponseWrapper", () => {
     const totalOutput = output.reduce((sum, c) => sum + c.length, 0);
     expect(totalOutput).toBe(part1.length + part2.length);
   });
+
+  it("reassembles an SSE event split across chunks before converting", async () => {
+    // A single SSE event is split across two TCP chunks in the middle of its
+    // JSON. Without the pendingTail buffer the first half (no closing \n\n)
+    // would be fed to the converter as an incomplete event and lost.
+    const event = 'data: {"choices":[{"delta":{"content":"HELLO"}}]}\n\n';
+    const part1 = new TextEncoder().encode(event.slice(0, 12));
+    const part2 = new TextEncoder().encode(event.slice(12));
+
+    let seenComplete = false;
+    const converter = (raw: string): string | null => {
+      // Only a complete event parses cleanly — this proves the two halves were
+      // joined before the converter ran.
+      const m = raw.match(/^data: (.*)$/m);
+      if (m) {
+        try { JSON.parse(m[1]); seenComplete = true; return raw + "\n"; } catch { return null; }
+      }
+      return null;
+    };
+
+    const { readable: src, writable: sink } = new TransformStream();
+    const wrapped = createStreamingResponseWrapper(
+      new Response(src, { status: 200 }),
+      "openai",
+      () => {},
+      converter,
+    );
+
+    // Write and read concurrently to avoid deadlock between pipeTo and
+    // reader.read() (same pattern as feedAndCollect above).
+    const writeDone = (async () => {
+      const writer = sink.getWriter();
+      for (const c of [part1, part2]) await writer.write(c);
+      await writer.close();
+    })();
+
+    const out: string[] = [];
+    const reader = wrapped.body!.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out.push(new TextDecoder().decode(value));
+    }
+    await writeDone;
+
+    expect(seenComplete).toBe(true);
+    expect(out.join("")).toContain("HELLO");
+  });
 });

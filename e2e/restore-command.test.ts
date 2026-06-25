@@ -123,8 +123,8 @@ describe("E2E: agentfare restore (init → restore lifecycle)", () => {
     expect(restored).not.toContain(MARKER_START);
     expect(restored).not.toContain(MARKER_END);
     expect(restored).not.toContain("localhost");
-    expect(restored).toContain(`export ANTHROPIC_BASE_URL="${ORIGINAL_UPSTREAM.anthropic}"`);
-    expect(restored).toContain(`export OPENAI_BASE_URL="${ORIGINAL_UPSTREAM.openai}"`);
+    expect(restored).toContain(`export ANTHROPIC_BASE_URL='${ORIGINAL_UPSTREAM.anthropic}'`);
+    expect(restored).toContain(`export OPENAI_BASE_URL='${ORIGINAL_UPSTREAM.openai}'`);
     expect(restored).toContain("alias ll='ls -la'");
   });
 

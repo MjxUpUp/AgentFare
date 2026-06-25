@@ -42,8 +42,11 @@ export function applyKeyPermissions(keysPath: string = getKeysPath()): void {
     const user = process.env.USERNAME ?? process.env.USER ?? "";
     if (!user) return;
     try {
-      child_process.execSync(
-        `icacls "${keysPath}" /inheritance:r /grant:r "${user}:(R,W)"`,
+      // spawnSync (no shell) so a crafted keysPath / username containing quotes
+      // or shell metacharacters can't break out of the icacls argument list.
+      child_process.spawnSync(
+        "icacls",
+        [keysPath, "/inheritance:r", "/grant:r", `${user}:(R,W)`],
         { stdio: "ignore" },
       );
     } catch {

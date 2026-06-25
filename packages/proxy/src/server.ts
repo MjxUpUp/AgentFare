@@ -64,6 +64,23 @@ export interface ProxyServerOptions {
 const UPSTREAM_TIMEOUT_MS = 120_000;
 
 /**
+ * Cap request body size to bound memory use under adversarial input; real LLM
+ * requests are far under this.
+ */
+const MAX_REQUEST_BODY_BYTES = 100 * 1024 * 1024; // 100 MB
+
+/**
+ * Hop-by-hop headers (RFC 7230 §6.1) must not be forwarded by a proxy, plus
+ * content-length which we recompute (streaming → chunked; a protocol-converted
+ * body has a different length) rather than trusting the upstream's value —
+ * forwarding a stale content-length truncates or pads the client's read.
+ */
+const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
+  "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+  "te", "trailers", "transfer-encoding", "upgrade", "content-length",
+]);
+
+/**
  * Per-host circuit breaker for upstream providers. Module-level singleton so a
  * tripped host is short-circuited for the lifetime of the daemon process.
  */
@@ -84,6 +101,10 @@ export function createProxyServer(options: ProxyServerOptions): nodeHttp.Server 
       if (!res.headersSent) {
         res.writeHead(502, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "proxy_error", message: String(err) }));
+      } else {
+        // Headers already sent (mid-stream): can't emit a JSON error, so tear
+        // the connection down — otherwise the client hangs waiting for bytes.
+        res.destroy();
       }
     }
   });
@@ -126,8 +147,15 @@ async function handleRequest(
     return;
   }
 
-  // Read request body
-  const bodyStr = await readBody(req);
+  // Read request body (capped to bound memory use under adversarial input)
+  let bodyStr: string;
+  try {
+    bodyStr = await readBody(req);
+  } catch {
+    res.writeHead(413, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "request_body_too_large" }));
+    return;
+  }
   if (!bodyStr) {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "empty_body" }));
@@ -150,7 +178,9 @@ async function handleRequest(
     res.end(JSON.stringify({ error: "invalid_json" }));
     return;
   }
-  const isStreaming = body.stream === true;
+  // Accept both boolean true and the string "true" — some clients send the
+  // latter, and a strict === true would misroute them to the buffered path.
+  const isStreaming = body.stream === true || body.stream === "true";
   const originalModel = body.model ?? "";
 
   // --- Quality signal: detect manual model switch ---
@@ -162,10 +192,18 @@ async function handleRequest(
   }
 
   // --- Run routing analysis ---
+  // Abort the analyzer on timeout so it can't keep running (holding resources)
+  // after we've already given up and fallen back. The timer is cleared when the
+  // analyzer wins the race so it doesn't leak across requests.
+  const abortCtrl = new AbortController();
+  let analysisTimer: NodeJS.Timeout | undefined;
   const result = await Promise.race([
-    options.deps.handler.handle(virtualUrl, bodyStr, headers),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), ANALYZER_TIMEOUT_MS)),
+    options.deps.handler.handle(virtualUrl, bodyStr, headers, abortCtrl.signal),
+    new Promise<null>((resolve) => {
+      analysisTimer = setTimeout(() => { abortCtrl.abort(); resolve(null); }, ANALYZER_TIMEOUT_MS);
+    }),
   ]) as HandleResult | null;
+  if (analysisTimer) clearTimeout(analysisTimer);
 
   // Determine target URL, body, headers, and whether protocol conversion is needed
   let targetUrl: string;
@@ -318,7 +356,10 @@ async function handleRequest(
       }
       return;
     }
-    pipeResponse(fallbackRes, res, targetProtocol, isStreaming, originalModel, undefined, options, result, sourceProtocol, targetProtocol);
+    // Fallback reached the ORIGINAL provider (virtualUrl + bodyStr + headers),
+    // so the response speaks sourceProtocol, not targetProtocol. Passing the
+    // latter made SSEPipe parse the body with the wrong protocol's tokenizer.
+    pipeResponse(fallbackRes, res, sourceProtocol, isStreaming, originalModel, undefined, options, result, sourceProtocol, targetProtocol);
     return;
   }
 
@@ -385,19 +426,25 @@ function pipeResponse(
     ? lookupModelEntry(options.deps.registry, originalModel)
     : undefined;
 
-  // Forward status code and headers
+  // Forward status code and headers, stripping hop-by-hop headers and
+  // content-length (see HOP_BY_HOP_RESPONSE_HEADERS). Node recomputes framing:
+  // chunked for the streaming pipe, an accurate content-length for the
+  // (possibly converted) buffered body.
   const statusCode = upstreamRes.statusCode ?? 200;
   const responseHeaders: Record<string, string> = {};
   for (const [key, value] of Object.entries(upstreamRes.headers)) {
+    if (HOP_BY_HOP_RESPONSE_HEADERS.has(key.toLowerCase())) continue;
     if (typeof value === "string") {
       responseHeaders[key] = value;
     } else if (Array.isArray(value)) {
       responseHeaders[key] = value.join(", ");
     }
   }
-  res.writeHead(statusCode, responseHeaders);
 
   if (isStreaming) {
+    // Streaming: write headers now; node uses chunked framing (omits
+    // content-length automatically) since we don't set one.
+    res.writeHead(statusCode, responseHeaders);
     // Use SSEPipe to extract tokens (and optionally convert protocol)
     const pipe = new SSEPipe(
       upstreamProtocol,
@@ -484,6 +531,13 @@ function pipeResponse(
         }
       }
 
+      // Non-streaming: the body is fully buffered, so send an accurate
+      // content-length (recomputed from the final, possibly-converted body)
+      // instead of letting node fall back to chunked framing.
+      res.writeHead(statusCode, {
+        ...responseHeaders,
+        "content-length": Buffer.byteLength(fullBody).toString(),
+      });
       res.end(fullBody);
     });
   }
@@ -536,8 +590,24 @@ function forwardRequest(
 function readBody(req: nodeHttp.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    let size = 0;
+    let aborted = false;
+    req.on("data", (chunk: Buffer) => {
+      if (aborted) return;
+      size += chunk.length;
+      if (size > MAX_REQUEST_BODY_BYTES) {
+        // Stop buffering an unbounded body; destroy the stream and reject so the
+        // caller can answer 413 instead of running out of memory.
+        aborted = true;
+        reject(new Error("request_body_too_large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (!aborted) resolve(Buffer.concat(chunks).toString("utf-8"));
+    });
     req.on("error", reject);
   });
 }

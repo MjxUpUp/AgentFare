@@ -59,8 +59,8 @@ describe("restoreShellProfile (POSIX branch, isolated tmp home)", () => {
     const after = fs.readFileSync(zshrc, "utf-8");
     expect(after).not.toContain(MARKER_START);
     expect(after).not.toContain("localhost");
-    expect(after).toContain('export ANTHROPIC_BASE_URL="https://api.anthropic.com"');
-    expect(after).toContain('export OPENAI_BASE_URL="https://api.openai.com/v1"');
+    expect(after).toContain("export ANTHROPIC_BASE_URL='https://api.anthropic.com'");
+    expect(after).toContain("export OPENAI_BASE_URL='https://api.openai.com/v1'");
     expect(after).toContain("alias ll='ls -la'");
   });
 
@@ -73,7 +73,7 @@ describe("restoreShellProfile (POSIX branch, isolated tmp home)", () => {
     const result = restoreShellProfile(CLI_TOOLS, { anthropic: "https://api.anthropic.com" }, "linux", tmpHome);
     expect(result.restored).toEqual(["anthropic"]);
     const after = fs.readFileSync(zshrc, "utf-8");
-    expect(after).toContain('export ANTHROPIC_BASE_URL="https://api.anthropic.com"');
+    expect(after).toContain("export ANTHROPIC_BASE_URL='https://api.anthropic.com'");
     expect(after).not.toContain("localhost");
     // No destructive unset emitted for the uncaptured provider.
     expect(after).not.toMatch(/unset OPENAI_BASE_URL/);
@@ -127,7 +127,7 @@ describe("restoreShellProfile (POSIX branch, isolated tmp home)", () => {
     );
     const after = fs.readFileSync(zshrc, "utf-8");
     expect(after).not.toContain("localhost");
-    expect(after).toContain('export ANTHROPIC_BASE_URL="https://api.anthropic.com"');
+    expect(after).toContain("export ANTHROPIC_BASE_URL='https://api.anthropic.com'");
     // The user's own openai relay line MUST survive — not be replaced by unset.
     expect(after).toContain('export OPENAI_BASE_URL="https://my-relay.example.com/v1"');
     expect(after).not.toContain("unset OPENAI_BASE_URL");
@@ -155,7 +155,7 @@ describe("restoreShellProfile (POSIX branch, isolated tmp home)", () => {
     );
     const after = fs.readFileSync(zshrc, "utf-8");
     expect(after).not.toContain("localhost");
-    expect(after).toContain('export ANTHROPIC_BASE_URL="https://api.anthropic.com"');
+    expect(after).toContain("export ANTHROPIC_BASE_URL='https://api.anthropic.com'");
     // The user's own openai relay survives — "" is no-value, not has-value.
     expect(after).toContain('export OPENAI_BASE_URL="https://my-relay.example.com/v1"');
     expect(result.restored).toEqual(["anthropic"]);
@@ -184,8 +184,8 @@ describe("restoreShellProfile (POSIX branch, isolated tmp home)", () => {
       const after = fs.readFileSync(rc, "utf-8");
       expect(after).not.toContain(MARKER_START);
       expect(after).not.toContain("localhost");
-      expect(after).toContain('export ANTHROPIC_BASE_URL="https://api.anthropic.com"');
-      expect(after).toContain('export OPENAI_BASE_URL="https://api.openai.com/v1"');
+      expect(after).toContain("export ANTHROPIC_BASE_URL='https://api.anthropic.com'");
+      expect(after).toContain("export OPENAI_BASE_URL='https://api.openai.com/v1'");
     }
   });
 
@@ -202,6 +202,40 @@ describe("restoreShellProfile (POSIX branch, isolated tmp home)", () => {
     expect(result.rcPath.startsWith(tmpHome)).toBe(true);
     // The restored $env line lands in the isolated profile, not the real one.
     const after = fs.readFileSync(result.rcPath, "utf-8");
-    expect(after).toContain('$env:ANTHROPIC_BASE_URL = "https://api.anthropic.com"');
+    expect(after).toContain('$env:ANTHROPIC_BASE_URL = \'https://api.anthropic.com\'');
+  });
+
+  // Escape-hardening: captured *_BASE_URL values come from process.env, a tool's
+  // settings.json, or an old shell profile — a tampered copy could weaponize any
+  // of them. writeRestoredBaseUrls MUST single-quote the value so shell
+  // metacharacters ($, ", ', etc.) are taken literally instead of being
+  // interpolated/executed on the next `source` (an ACE vector via settings.json).
+  it("POSIX: single-quotes a captured URL so $ and \" are never expanded", () => {
+    simulateTakeover(8787);
+    const tricky = 'https://x$(whoami)y"z';
+    restoreShellProfile(CLI_TOOLS, { anthropic: tricky }, "linux", tmpHome);
+    const after = fs.readFileSync(zshrc, "utf-8");
+    // Value is wrapped verbatim in single quotes: the $() and " stay literal.
+    expect(after).toContain('export ANTHROPIC_BASE_URL=\'https://x$(whoami)y"z\'');
+  });
+
+  it("POSIX: rewrites an embedded single quote to the POSIX '\\'' escape", () => {
+    simulateTakeover(8787);
+    restoreShellProfile(CLI_TOOLS, { anthropic: "https://a'b.c" }, "linux", tmpHome);
+    const after = fs.readFileSync(zshrc, "utf-8");
+    // The line must parse as ONE literal value: 'https://a'\''b.c'
+    expect(after).toMatch(/export ANTHROPIC_BASE_URL='https:\/\/a'\\''b\.c'/);
+  });
+
+  it("PowerShell: doubles an embedded single quote in the restored $env line", () => {
+    const result = restoreShellProfile(
+      CLI_TOOLS,
+      { anthropic: "https://a'b.c" },
+      "windows-native",
+      tmpHome,
+    );
+    const after = fs.readFileSync(result.rcPath, "utf-8");
+    // PS single-quoted string literal: a literal ' is written as ''
+    expect(after).toContain("$env:ANTHROPIC_BASE_URL = 'https://a''b.c'");
   });
 });

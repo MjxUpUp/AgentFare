@@ -129,6 +129,13 @@ describe("proxy server request routing logic", () => {
       expect(key).toBe("sk-ant-from-header");
     });
 
+    it("should accept a case-insensitive Bearer scheme (RFC 7235)", () => {
+      // Real clients send "bearer"/"BEARER"; the scheme is case-insensitive
+      // while the credential that follows is case-sensitive.
+      expect(resolveApiKey("openai", { authorization: "bearer sk-lower" })).toBe("sk-lower");
+      expect(resolveApiKey("openai", { authorization: "BEARER sk-upper" })).toBe("sk-upper");
+    });
+
     it("should return undefined when no key available", () => {
       const key = resolveApiKey("openai", {});
       expect(typeof key === "string" || key === undefined).toBe(true);

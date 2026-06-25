@@ -1,4 +1,4 @@
-import type { AnthropicMessage, AnthropicContentBlock } from "./types.js";
+import type { AnthropicMessage, AnthropicContentBlock, OpenAIContentPart } from "./types.js";
 
 interface AnthropicRequest {
   model: string;
@@ -13,7 +13,7 @@ interface AnthropicRequest {
 
 interface OpenAIChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | null | OpenAIContentPart[];
   tool_calls?: Array<{
     id: string;
     type: "function";
@@ -26,6 +26,7 @@ interface OpenAIRequest {
   model: string;
   messages: OpenAIChatMessage[];
   max_tokens?: number;
+  max_completion_tokens?: number;
   stream?: boolean;
   tools?: any[];
   temperature?: number;
@@ -36,10 +37,17 @@ export function convertAnthropicToOpenAIRequest(
   anthropic: AnthropicRequest,
   targetModelId?: string,
 ): OpenAIRequest {
+  // OpenAI's o-series (o1/o3/...) rejects `max_tokens` and requires
+  // `max_completion_tokens`; other models accept `max_tokens`. Route by id
+  // prefix so a cross-provider hop onto an o-series model isn't rejected.
+  const targetModel = targetModelId ?? "gpt-4o";
+  const isOSeries = /^o\d/i.test(targetModel);
   const result: OpenAIRequest = {
-    model: targetModelId ?? "gpt-4o",
+    model: targetModel,
     messages: [],
-    max_tokens: anthropic.max_tokens,
+    ...(isOSeries
+      ? { max_completion_tokens: anthropic.max_tokens }
+      : { max_tokens: anthropic.max_tokens }),
     stream: anthropic.stream,
   };
 
@@ -83,39 +91,77 @@ function convertUserMessage(msg: AnthropicMessage): OpenAIChatMessage[] {
 
   if (typeof msg.content === "string") {
     results.push({ role: "user", content: msg.content });
-  } else if (Array.isArray(msg.content)) {
-    const textParts: string[] = [];
-    const toolResults: Array<{ tool_use_id: string; content: string }> = [];
+    return results;
+  }
+  if (!Array.isArray(msg.content)) return results;
 
-    for (const block of msg.content) {
-      const typed = block as AnthropicContentBlock;
-      if (typed.type === "text") {
-        textParts.push(typed.text);
-      } else if (typed.type === "tool_result") {
-        let resultContent: string;
-        if (typeof typed.content === "string") {
-          resultContent = typed.content;
-        } else if (Array.isArray(typed.content)) {
-          resultContent = typed.content
-            .filter((b: any) => b.type === "text")
-            .map((b: any) => b.text)
-            .join("");
-        } else {
-          resultContent = "";
-        }
-        toolResults.push({ tool_use_id: typed.tool_use_id, content: resultContent });
+  // Collect text, images, and tool_results separately. Images force OpenAI
+  // multipart content (an array of text/image_url parts); tool_results still
+  // become their own role:"tool" messages. Previously image blocks were
+  // silently dropped, losing multimodal input on a cross-provider hop.
+  const textParts: string[] = [];
+  const imageParts: OpenAIContentPart[] = [];
+  const toolResults: Array<{ tool_use_id: string; content: string }> = [];
+
+  for (const block of msg.content) {
+    const typed = block as AnthropicContentBlock;
+    if (typed.type === "text") {
+      textParts.push(typed.text);
+    } else if (typed.type === "image") {
+      const url = anthropicImageToOpenAIUrl(typed);
+      if (url) imageParts.push({ type: "image_url", image_url: { url } });
+    } else if (typed.type === "tool_result") {
+      let resultContent: string;
+      if (typeof typed.content === "string") {
+        resultContent = typed.content;
+      } else if (Array.isArray(typed.content)) {
+        resultContent = typed.content
+          .filter((b: any) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("");
+      } else {
+        resultContent = "";
       }
-    }
-
-    if (textParts.length > 0) {
-      results.push({ role: "user", content: textParts.join("\n") });
-    }
-    for (const tr of toolResults) {
-      results.push({ role: "tool", content: tr.content, tool_call_id: tr.tool_use_id });
+      toolResults.push({ tool_use_id: typed.tool_use_id, content: resultContent });
     }
   }
 
+  if (imageParts.length > 0) {
+    // Multipart content: text (if any) followed by image parts.
+    const parts: OpenAIContentPart[] = [];
+    if (textParts.length > 0) parts.push({ type: "text", text: textParts.join("\n") });
+    parts.push(...imageParts);
+    results.push({ role: "user", content: parts });
+  } else if (textParts.length > 0) {
+    results.push({ role: "user", content: textParts.join("\n") });
+  }
+
+  for (const tr of toolResults) {
+    results.push({ role: "tool", content: tr.content, tool_call_id: tr.tool_use_id });
+  }
+
   return results;
+}
+
+/**
+ * Convert an Anthropic image content block's source to an OpenAI image_url.
+ * Anthropic supports base64 ({type:"base64", media_type, data}) and url
+ * ({type:"url", url}) sources; both map to a single OpenAI image_url.url
+ * (a data: URI for base64, the raw URL otherwise).
+ */
+function anthropicImageToOpenAIUrl(
+  block: Extract<AnthropicContentBlock, { type: "image" }>,
+): string | null {
+  const source = block.source;
+  if (!source) return null;
+  if (source.type === "base64") {
+    if (!source.data) return null;
+    return `data:${source.media_type ?? "image/png"};base64,${source.data}`;
+  }
+  if (source.type === "url") {
+    return source.url ?? null;
+  }
+  return null;
 }
 
 /**

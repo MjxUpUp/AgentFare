@@ -224,4 +224,66 @@ describe("convertAnthropicToOpenAIRequest", () => {
     expect(assistantMsg.content).toBeNull();
     expect(assistantMsg.tool_calls).toHaveLength(1);
   });
+
+  it("converts an Anthropic base64 image block to an OpenAI image_url part", () => {
+    const result = convertAnthropicToOpenAIRequest({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "what is this?" },
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBOR" } },
+        ],
+      }],
+      stream: false,
+    });
+    const userMsg = result.messages.find((m) => m.role === "user")!;
+    expect(Array.isArray(userMsg.content)).toBe(true);
+    const parts = userMsg.content as any[];
+    expect(parts[0]).toEqual({ type: "text", text: "what is this?" });
+    expect(parts[1]).toEqual({
+      type: "image_url",
+      image_url: { url: "data:image/png;base64,iVBOR" },
+    });
+  });
+
+  it("converts an Anthropic url-source image block to an OpenAI image_url", () => {
+    const result = convertAnthropicToOpenAIRequest({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "url", url: "https://example.com/cat.png" } },
+        ],
+      }],
+      stream: false,
+    });
+    const userMsg = result.messages.find((m) => m.role === "user")!;
+    const parts = userMsg.content as any[];
+    expect(parts.some((p) => p.type === "image_url" && p.image_url.url === "https://example.com/cat.png")).toBe(true);
+  });
+
+  it("uses max_completion_tokens for o-series target models", () => {
+    const result = convertAnthropicToOpenAIRequest({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+      stream: false,
+    }, "o3-mini");
+    expect(result.max_completion_tokens).toBe(1024);
+    expect(result.max_tokens).toBeUndefined();
+  });
+
+  it("uses max_tokens for non-o-series target models", () => {
+    const result = convertAnthropicToOpenAIRequest({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+      stream: false,
+    }, "gpt-4o");
+    expect(result.max_tokens).toBe(1024);
+    expect(result.max_completion_tokens).toBeUndefined();
+  });
 });

@@ -179,14 +179,23 @@ describe("createSSEStreamConverter", () => {
   });
 
   it("should handle [DONE] without prior stream start", () => {
-    // [DONE] arrives in idle state (no content was emitted)
+    // [DONE] arrives in idle state (no content was emitted). The converter must
+    // synthesize a COMPLETE, protocol-legal Anthropic sequence: message_start +
+    // content_block_start, then close the block, then message_delta + stop.
+    // Previously it emitted content_block_stop / message_stop with NO preceding
+    // message_start — an invalid sequence Anthropic clients reject.
     const doneChunk = "data: [DONE]\n\n";
     const result = converter.convert(doneChunk, "claude-sonnet-4-6");
 
-    // Should emit message_delta and message_stop but NOT content_block_stop
-    expect(result).not.toContain("content_block_stop");
+    expect(result).toContain("message_start");
+    expect(result).toContain("content_block_start");
+    expect(result).toContain("content_block_stop");
     expect(result).toContain("message_delta");
     expect(result).toContain("message_stop");
+    // Correct ordering: the block is opened before it is closed, and the
+    // message is started before any block event.
+    expect(result!.indexOf("message_start")).toBeLessThan(result!.indexOf("content_block_start"));
+    expect(result!.indexOf("content_block_start")).toBeLessThan(result!.indexOf("content_block_stop"));
   });
 
   it("multiple converters should be independent (concurrency safety)", () => {

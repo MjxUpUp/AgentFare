@@ -12,8 +12,12 @@ export function generateShellFunctions(
   const functions = tools
     .map(
       (tool) =>
-        // ISSUE-031: use $HOME instead of ~ for reliable shell expansion
-        `${tool.name}() {\n  NODE_OPTIONS="--require \"$HOME/.agentfare/loader.js\"" command ${tool.name} "$@"\n}`
+        // ISSUE-031: use $HOME instead of ~ for reliable shell expansion.
+        // Respect AGENTFARE_HOME so the loader resolves to the same dir the
+        // data files live in (getBaseDir SSOT), not a hardcoded ~/.agentfare —
+        // otherwise a custom AGENTFARE_HOME writes loader.js elsewhere while
+        // the shell function keeps pointing at the default path.
+        `${tool.name}() {\n  NODE_OPTIONS="--require \\"\${AGENTFARE_HOME:-$HOME/.agentfare}/loader.js\\"" command ${tool.name} "$@"\n}`
     )
     .join("\n");
   return `${MARKER_START}\n${functions}\n${MARKER_END}`;
@@ -53,8 +57,13 @@ export function writeShellConfig(content: string): string {
  * On Windows where cross-drive rename may fail, falls back to copy+unlink.
  */
 function atomicWriteFileSync(targetPath: string, data: string): void {
+  // Place the temp file in the SAME directory as the target so the rename is
+  // atomic on POSIX and never hits EXDEV on Windows. os.tmpdir() is usually on
+  // a different drive than the shell profile (e.g. C:\...\Temp vs Documents\),
+  // so a cross-device rename silently degraded to a non-atomic copy+unlink —
+  // a crash mid-copy would leave a half-written .zshrc / PS profile.
   const tmpPath = path.join(
-    os.tmpdir(),
+    path.dirname(targetPath),
     `.agentfare-rc-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`
   );
   fs.writeFileSync(tmpPath, data, "utf-8");
@@ -71,6 +80,28 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Quote a value for a POSIX shell assignment so it is taken literally:
+ * `export VAR='...'` with every embedded `'` rewritten to `'\''`.
+ *
+ * Without this, a captured *_BASE_URL containing `"`, `$`, backtick, or `'`
+ * (sourced from process.env / a tool's settings.json / an old profile) would
+ * be interpolated into the profile and executed on the next `source` — an
+ * arbitrary-code-execution vector via a tampered settings.json.
+ */
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Quote a value for a PowerShell single-quoted string literal.
+ * PS single-quoted strings do NOT expand variables or sub-expressions, so this
+ * is injection-safe; only an embedded `'` needs doubling (`''`).
+ */
+function powershellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 // ---------------------------------------------------------------------------
 // Windows PowerShell support
 // ---------------------------------------------------------------------------
@@ -78,15 +109,15 @@ function escapeRegex(str: string): string {
 export function generatePowerShellFunctions(
   tools: Array<{ name: string }>
 ): string {
-  const loaderPath = `$HOME\\.agentfare\\loader.js`;
   const functions = tools
     .map(
       (tool) =>
         `function ${tool.name} {\n` +
+        `  $__af_home = if ($env:AGENTFARE_HOME) { $env:AGENTFARE_HOME } else { Join-Path $HOME '.agentfare' }\n` +
         `  $__agentfare_bin = (Get-Command '${tool.name}.cmd' -ErrorAction SilentlyContinue).Source\n` +
         `  if (-not $__agentfare_bin) { $__agentfare_bin = (Get-Command '${tool.name}' -CommandType Application -ErrorAction SilentlyContinue).Source }\n` +
         `  if (-not $__agentfare_bin) { $__agentfare_bin = '${tool.name}' }\n` +
-        `  $env:NODE_OPTIONS = "--require ${loaderPath}"\n` +
+        `  $env:NODE_OPTIONS = "--require $(Join-Path $__af_home 'loader.js')"\n` +
         `  & $__agentfare_bin @args\n` +
         `  Remove-Item Env:\\NODE_OPTIONS\n` +
         `}`
@@ -144,6 +175,10 @@ export function writeConfig(
   if (platform === "windows-native") {
     const content = generatePowerShellFunctions(tools);
     const rcPath = writePowerShellProfile(content);
+    // Git Bash / WSL bash run on win32 (detectPlatform() → "windows-native")
+    // but load ~/.bashrc, not the PowerShell profile. Without mirroring the
+    // POSIX functions into .bashrc, the takeover silently fails for bash users.
+    writeShellConfig(generateShellFunctions(tools));
     return { rcPath, platform };
   }
   const content = generateShellFunctions(tools);
@@ -280,6 +315,8 @@ export function writeProxyConfig(
   if (platform === "windows-native") {
     const content = generatePowerShellExports(tools, port)
     const rcPath = writePowerShellProfile(content)
+    // Git Bash loads ~/.bashrc; mirror the proxy exports there too.
+    writeShellConfig(generateProxyExports(tools, port))
     return { rcPath, platform }
   }
   const content = generateProxyExports(tools, port)
@@ -347,10 +384,13 @@ export function writeRestoredBaseUrls(
     if (t.type !== "cli" || !t.envVar || !t.provider) continue;
     const url = capturedUrls[t.provider];
     if (typeof url === "string" && url.length > 0) {
+      // Single-quote the URL so a captured *_BASE_URL containing shell
+      // metacharacters (from env / settings.json / an old profile) cannot be
+      // interpolated/executed when the profile is sourced.
       lines.push(
         platform === "windows-native"
-          ? `$env:${t.envVar} = "${url}"`
-          : `export ${t.envVar}="${url}"`
+          ? `$env:${t.envVar} = ${powershellSingleQuote(url)}`
+          : `export ${t.envVar}=${shellSingleQuote(url)}`
       );
       restored.push(t.provider);
     } else {

@@ -34,9 +34,11 @@ interface ToolCallTracker {
   started: boolean;
 }
 
+type StreamState = "idle" | "started" | "terminated";
+
 export function createSSEStreamConverter(): SSEStreamConverter {
   const s = {
-    state: "idle" as "idle" | "started",
+    state: "idle" as StreamState,
     msgId: "",
     /** Next content block index to assign. */
     nextBlockIndex: 0,
@@ -54,7 +56,7 @@ export function createSSEStreamConverter(): SSEStreamConverter {
     convert(sseChunk: string, model: string): string | null {
       return convertChunk(
         sseChunk, model,
-        () => s.state, (v) => { s.state = v; },
+        () => s.state, (v: StreamState) => { s.state = v; },
         () => s.msgId, (id) => { s.msgId = id; },
         () => s.nextBlockIndex, (i) => { s.nextBlockIndex = i; },
         () => s.toolCalls, (tc) => { s.toolCalls = tc; },
@@ -66,8 +68,8 @@ export function createSSEStreamConverter(): SSEStreamConverter {
 function convertChunk(
   sseChunk: string,
   model: string,
-  getState: () => string,
-  setState: (s: "idle" | "started") => void,
+  getState: () => StreamState,
+  setState: (s: StreamState) => void,
   getMsgId: () => string,
   setMsgId: (id: string) => void,
   getNextBlockIndex: () => number,
@@ -78,11 +80,51 @@ function convertChunk(
   const lines = sseChunk.split("\n");
   const results: string[] = [];
 
+  // Ensure the Anthropic message preamble (message_start + content_block_start
+  // for block 0) exists before emitting any content or close event. Defined
+  // ONCE before the loop so the [DONE] and finish_reason branches can call it
+  // even when they are the very first (or only) event in the stream — without
+  // this, a stream that ends with only [DONE] (or only a finish_reason, no
+  // content) yields content_block_stop / message_stop with no preceding start,
+  // which is a protocol-illegal Anthropic sequence.
+  const ensureStarted = (id?: string) => {
+    if (getState() !== "idle") return;
+    setMsgId(id ?? `msg_${Date.now()}`);
+    results.push(formatSSE("message_start", {
+      type: "message_start",
+      message: {
+        id: getMsgId(),
+        type: "message",
+        role: "assistant",
+        model,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    }));
+    // Start text content block (index 0)
+    results.push(formatSSE("content_block_start", {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    }));
+    setNextBlockIndex(1);
+    setState("started");
+  };
+
   for (const line of lines) {
     if (!line.startsWith("data: ")) continue;
     const dataStr = line.slice(6).trim();
 
     if (dataStr === "[DONE]") {
+      // finish_reason may have already terminated the stream — don't emit a
+      // second closing sequence (would duplicate message_stop). For streams
+      // that end with [DONE] only (no finish_reason, possibly no content at
+      // all), synthesize a well-formed Anthropic sequence; that requires the
+      // preamble, hence ensureStarted() first.
+      if (getState() === "terminated") continue;
+      ensureStarted();
       // Close text block if it was started and not already closed by tool calls
       if (getNextBlockIndex() > 0 && getToolCalls().size === 0) {
         results.push(formatSSE("content_block_stop", { type: "content_block_stop", index: 0 }));
@@ -98,7 +140,7 @@ function convertChunk(
         usage: { output_tokens: 0 },
       }));
       results.push(formatSSE("message_stop", { type: "message_stop" }));
-      setState("idle");
+      setState("terminated");
       continue;
     }
 
@@ -108,41 +150,14 @@ function convertChunk(
     const choice = data.choices?.[0];
     if (!choice) continue;
 
-    // Ensure message is started before processing any content
-    const ensureStarted = () => {
-      if (getState() !== "idle") return;
-      setMsgId(data.id ?? `msg_${Date.now()}`);
-      results.push(formatSSE("message_start", {
-        type: "message_start",
-        message: {
-          id: getMsgId(),
-          type: "message",
-          role: "assistant",
-          model,
-          content: [],
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: 0, output_tokens: 0 },
-        },
-      }));
-      // Start text content block (index 0)
-      results.push(formatSSE("content_block_start", {
-        type: "content_block_start",
-        index: 0,
-        content_block: { type: "text", text: "" },
-      }));
-      setNextBlockIndex(1);
-      setState("started");
-    };
-
     // First chunk with role -> message_start (no content block yet)
     if (getState() === "idle" && choice.delta?.role) {
-      ensureStarted();
+      ensureStarted(data.id);
     }
 
     // Content delta — always uses block index 0 if no tool calls have been emitted
     if (choice.delta?.content !== undefined && choice.delta.content !== null) {
-      ensureStarted();
+      ensureStarted(data.id);
       results.push(formatSSE("content_block_delta", {
         type: "content_block_delta",
         index: 0,
@@ -152,7 +167,7 @@ function convertChunk(
 
     // Tool calls delta — proper tool_use content blocks
     if (choice.delta?.tool_calls) {
-      ensureStarted();
+      ensureStarted(data.id);
       const toolCalls = getToolCalls();
 
       for (const tc of choice.delta.tool_calls) {
@@ -197,6 +212,9 @@ function convertChunk(
 
     // Finish reason
     if (choice.finish_reason) {
+      // Guard against a duplicate terminator after [DONE] already closed the
+      // stream (some upstreams send both).
+      if (getState() === "terminated") continue;
       // Close any open tool_use blocks
       const toolCalls = getToolCalls();
       for (const [, tracker] of toolCalls) {
@@ -213,7 +231,7 @@ function convertChunk(
         usage: { output_tokens: 0 },
       }));
       results.push(formatSSE("message_stop", { type: "message_stop" }));
-      setState("idle");
+      setState("terminated");
     }
   }
 

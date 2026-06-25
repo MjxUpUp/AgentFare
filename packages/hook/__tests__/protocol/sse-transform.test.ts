@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { convertAnthropicSSEToOpenAI } from "../../src/protocol/sse-transform.js";
+import { convertAnthropicSSEToOpenAI, createAnthropicToOpenAISSEConverter } from "../../src/protocol/sse-transform.js";
 
 describe("convertAnthropicSSEToOpenAI", () => {
   // ── content_block_delta ───────────────────────────────────────────────
@@ -70,13 +70,14 @@ describe("convertAnthropicSSEToOpenAI", () => {
     expect(parsed.choices[0].finish_reason).toBe("tool_calls");
   });
 
-  it("should convert message_delta with stop_reason max_tokens to finish_reason stop", () => {
+  it("should convert message_delta with stop_reason max_tokens to finish_reason length", () => {
     const event = `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}`;
     const result = convertAnthropicSSEToOpenAI(event, "claude-sonnet-4-6");
     expect(result).toBeTruthy();
     const parsed = JSON.parse(result!.replace("data: ", ""));
-    // max_tokens is not "tool_use", so it maps to "stop"
-    expect(parsed.choices[0].finish_reason).toBe("stop");
+    // max_tokens (Anthropic) maps to length (OpenAI) — both signal the token
+    // limit was hit, distinct from a clean stop.
+    expect(parsed.choices[0].finish_reason).toBe("length");
   });
 
   // ── message_stop ──────────────────────────────────────────────────────
@@ -147,5 +148,61 @@ describe("convertAnthropicSSEToOpenAI", () => {
       model,
     );
     expect(stopResult).toContain("[DONE]");
+  });
+});
+
+describe("createAnthropicToOpenAISSEConverter (stateful, tool_use-aware)", () => {
+  const parse = (out: string) => JSON.parse(out.replace("data: ", "").trim());
+
+  it("preserves a streaming tool_use across content_block_start + input_json_delta", () => {
+    const conv = createAnthropicToOpenAISSEConverter("gpt-4o");
+    conv.convert('event: message_start\ndata: {"type":"message_start","message":{"id":"msg-1"}}');
+
+    const start = conv.convert('event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}}');
+    const pStart = parse(start!);
+    // Opening delta carries id + name + empty args; index is dense 0-based.
+    expect(pStart.choices[0].delta.tool_calls[0]).toMatchObject({
+      index: 0, id: "toolu_1", type: "function", function: { name: "get_weather", arguments: "" },
+    });
+
+    // Argument fragments arrive as separate input_json_delta events and MUST
+    // reuse the same tool_call index (0) — the stateless converter dropped these.
+    const arg1 = conv.convert('event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"loc"}}');
+    const arg2 = conv.convert('event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\":\\"SF\\"}"}}');
+    expect(parse(arg1!).choices[0].delta.tool_calls[0]).toEqual({ index: 0, function: { arguments: '{"loc' } });
+    expect(parse(arg2!).choices[0].delta.tool_calls[0]).toEqual({ index: 0, function: { arguments: '":"SF"}' } });
+  });
+
+  it("assigns independent dense indices to two parallel tool_use blocks", () => {
+    const conv = createAnthropicToOpenAISSEConverter("gpt-4o");
+    conv.convert('event: message_start\ndata: {"type":"message_start","message":{"id":"m"}}');
+    const s1 = conv.convert('event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"a","name":"f1","input":{}}}');
+    const s2 = conv.convert('event: content_block_start\ndata: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"b","name":"f2","input":{}}}');
+    expect(parse(s1!).choices[0].delta.tool_calls[0].index).toBe(0);
+    expect(parse(s2!).choices[0].delta.tool_calls[0].index).toBe(1);
+  });
+
+  it("converts text_delta to a content delta", () => {
+    const conv = createAnthropicToOpenAISSEConverter("gpt-4o");
+    conv.convert('event: message_start\ndata: {"type":"message_start","message":{"id":"m"}}');
+    const d = conv.convert('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}');
+    expect(parse(d!).choices[0].delta.content).toBe("hi");
+  });
+
+  it("maps stop_reason tool_use → tool_calls and max_tokens → length", () => {
+    const conv = createAnthropicToOpenAISSEConverter("gpt-4o");
+    conv.convert('event: message_start\ndata: {"type":"message_start","message":{"id":"m"}}');
+    const tu = conv.convert('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}');
+    expect(parse(tu!).choices[0].finish_reason).toBe("tool_calls");
+
+    const conv2 = createAnthropicToOpenAISSEConverter("gpt-4o");
+    conv2.convert('event: message_start\ndata: {"type":"message_start","message":{"id":"m"}}');
+    const mt = conv2.convert('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}');
+    expect(parse(mt!).choices[0].finish_reason).toBe("length");
+  });
+
+  it("emits [DONE] on message_stop", () => {
+    const conv = createAnthropicToOpenAISSEConverter("gpt-4o");
+    expect(conv.convert('event: message_stop\ndata: {"type":"message_stop"}')).toContain("[DONE]");
   });
 });

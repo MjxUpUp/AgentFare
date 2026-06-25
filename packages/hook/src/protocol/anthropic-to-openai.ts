@@ -15,11 +15,29 @@ export function convertAnthropicToOpenAIResponse(
       },
       finish_reason: mapFinishReason(anthropicResp.stop_reason),
     }],
-    usage: {
-      prompt_tokens: anthropicResp.usage?.input_tokens ?? 0,
-      completion_tokens: anthropicResp.usage?.output_tokens ?? 0,
-      total_tokens: (anthropicResp.usage?.input_tokens ?? 0) + (anthropicResp.usage?.output_tokens ?? 0),
-    },
+    usage: buildOpenAIUsage(anthropicResp.usage),
+  };
+}
+
+/**
+ * Map Anthropic token usage to OpenAI usage. Anthropic reports prompt-cache
+ * tokens (cache_creation_input_tokens / cache_read_input_tokens) separately;
+ * OpenAI's prompt_tokens is the billable input total and counts cached tokens
+ * as input. Folding them in keeps cost tracking accurate on cached requests —
+ * previously cache tokens were dropped, undercounting input cost.
+ */
+function buildOpenAIUsage(usage: any) {
+  const u = usage ?? {};
+  const input = u.input_tokens ?? 0;
+  const cacheCreation = u.cache_creation_input_tokens ?? 0;
+  const cacheRead = u.cache_read_input_tokens ?? 0;
+  const output = u.output_tokens ?? 0;
+  const promptTokens = input + cacheCreation + cacheRead;
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: output,
+    total_tokens: promptTokens + output,
+    ...(cacheRead > 0 ? { prompt_tokens_details: { cached_tokens: cacheRead } } : {}),
   };
 }
 

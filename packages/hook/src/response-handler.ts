@@ -50,16 +50,26 @@ export function createStreamingResponseWrapper(
   protocolConverter?: SSEProtocolConverter,
 ): Response {
   const decoder = new TextDecoder();
+  // SSE events can be split across TCP chunk boundaries. Previously each chunk
+  // was split on /\n\n/ and every segment fed to the protocol converter as-is
+  // — a segment like `data: {par` (no closing \n\n yet) parsed as garbage and
+  // the event was lost (and the converter's per-event state went out of sync).
+  // Buffer the trailing incomplete segment and prepend it to the next chunk so
+  // events are always handed to the converter whole.
+  let pendingTail = "";
 
   const { readable, writable } = new TransformStream({
     transform(chunk, controller) {
       if (protocolConverter) {
-        const text = decoder.decode(chunk, { stream: true });
-        // SSE chunks are separated by double newlines
-        const rawEvents = text.split(/\n\n/);
-        const convertedParts: string[] = [];
+        const text = pendingTail + decoder.decode(chunk, { stream: true });
+        // SSE events are separated by double newlines. The segment after the
+        // last separator may be incomplete (the rest arrives in a later chunk)
+        // — hold it back in pendingTail for the next transform call.
+        const segments = text.split(/\n\n/);
+        pendingTail = segments.pop() ?? "";
 
-        for (const rawEvent of rawEvents) {
+        const convertedParts: string[] = [];
+        for (const rawEvent of segments) {
           if (!rawEvent.trim()) continue;
           const converted = protocolConverter(rawEvent);
           if (converted) {
@@ -88,6 +98,15 @@ export function createStreamingResponseWrapper(
         if (tokenData) {
           onTokens(tokenData);
         }
+      }
+    },
+    flush(controller) {
+      // Some upstreams omit the trailing blank line after the final event (or
+      // after [DONE]). Flush whatever remains so it isn't silently dropped.
+      if (protocolConverter && pendingTail.trim()) {
+        const converted = protocolConverter(pendingTail);
+        controller.enqueue(new TextEncoder().encode(converted ?? pendingTail + "\n\n"));
+        pendingTail = "";
       }
     },
   });
