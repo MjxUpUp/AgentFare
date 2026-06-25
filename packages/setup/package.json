@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/setup",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Auto-detection and setup tooling for AgentFare",
   "license": "MIT",
   "main": "dist/index.js",

@@ -1,6 +1,6 @@
 {
   "name": "@agentfare/loader",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Module loader for injecting AgentFare hooks at runtime",
   "license": "MIT",
   "main": "dist/index.js",
