@@ -1,10 +1,10 @@
 [package]
-name = "app"
+name = "agentfare-gui"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "AgentFare desktop console — Tauri shell wrapping a loopback proxy daemon"
+authors = ["AgentFare"]
+license = "MIT"
+repository = "https://github.com/MjxUpUp/AgentFare"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -23,3 +23,8 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.3" }
 tauri-plugin-log = "2"
+
+# libc is used on Unix to send SIGTERM (clean daemon shutdown) before SIGKILL.
+# Target-gated so it isn't pulled into the Windows build.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

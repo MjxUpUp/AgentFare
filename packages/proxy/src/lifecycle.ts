@@ -100,7 +100,11 @@ export async function startProxy(
     try {
       const server = createProxyServer(options);
 
-      server.listen(options.port, () => {
+      // Bind loopback only: the proxy holds the user's upstream API keys and the
+      // admin panel is loopback-gated, so it must never be reachable from the LAN.
+      // (Node's `listen(port)` with no host binds all interfaces — `::` / 0.0.0.0 —
+      // which would expose the proxy to every host on the network.)
+      server.listen(options.port, "127.0.0.1", () => {
         const state: ProxyState = {
           pid: process.pid,
           port: options.port,

@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as http from "node:http";
-import { waitForProxy, stopProxy, getProxyStatePath } from "../src/lifecycle.js";
+import * as net from "node:net";
+import { waitForProxy, stopProxy, startProxy, getProxyStatePath } from "../src/lifecycle.js";
 
 // Mock child_process so spawn() returns a stub instead of spawning a real process.
 vi.mock("node:child_process", () => ({
@@ -147,5 +148,92 @@ describe("stopProxy", () => {
 
     // The stale state file should have been cleaned up
     expect(fs.existsSync(statePath)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startProxy — loopback-only binding
+//
+// The proxy holds the user's upstream API keys, so it must never bind a
+// non-loopback interface. `server.listen(port)` with no host binds `::` /
+// 0.0.0.0 (every interface); this guards the regression by asserting the LAN
+// address is refused while 127.0.0.1 still serves.
+// ---------------------------------------------------------------------------
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      const p = addr && typeof addr === "object" ? addr.port : 0;
+      srv.close(() => resolve(p));
+    });
+  });
+}
+
+// GET /health → status code, or 0 on connection refusal / timeout.
+function getHealth(host: string, port: number): Promise<number> {
+  return new Promise((resolve) => {
+    const req = http.get({ host, port, path: "/health", timeout: 2000 }, (res) => {
+      res.resume();
+      resolve(res.statusCode ?? 0);
+    });
+    req.on("error", () => resolve(0)); // ECONNREFUSED → 0
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(0);
+    });
+  });
+}
+
+function lanIpv4(): string | undefined {
+  for (const ifaces of Object.values(os.networkInterfaces())) {
+    for (const i of ifaces ?? []) {
+      if (i.family === "IPv4" && !i.internal) return i.address;
+    }
+  }
+  return undefined;
+}
+
+describe("startProxy binds loopback only", () => {
+  let tmpHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(() => {
+    tmpHome = path.join(os.tmpdir(), `agentfare-bind-test-${Date.now()}`);
+    fs.mkdirSync(tmpHome, { recursive: true });
+    originalHome = process.env.AGENTFARE_HOME;
+    process.env.AGENTFARE_HOME = tmpHome;
+  });
+
+  afterEach(() => {
+    // Delete the state file so isProxyRunning() doesn't see a stale "running"
+    // entry (pid = this process) and mislead later tests. The foreground
+    // server lingers on its unique port until the worker exits — no other test
+    // reuses that port.
+    try {
+      fs.unlinkSync(getProxyStatePath());
+    } catch {
+      /* best effort */
+    }
+    process.env.AGENTFARE_HOME = originalHome;
+  });
+
+  it("serves /health on 127.0.0.1 and refuses LAN interfaces", { timeout: 10000 }, async () => {
+    const port = await freePort();
+    const result = await startProxy({ port, deps: { handler: {} as never } });
+    expect(result.success).toBe(true);
+
+    // Reachable on loopback.
+    expect(await getHealth("127.0.0.1", port)).toBe(200);
+
+    // NOT reachable from a non-loopback interface — proves listen() bound
+    // 127.0.0.1 rather than 0.0.0.0/::, which would expose the proxy and its
+    // upstream API keys to the whole LAN.
+    const lan = lanIpv4();
+    if (lan) {
+      expect(await getHealth(lan, port)).toBe(0); // ECONNREFUSED
+    }
   });
 });

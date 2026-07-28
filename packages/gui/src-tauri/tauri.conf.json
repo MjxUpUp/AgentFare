@@ -1,13 +1,13 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "agentfare",
+  "productName": "AgentFare",
   "version": "0.1.0",
   "identifier": "com.agentfare.gui",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "beforeBuildCommand": "pnpm -w build && pnpm --filter @agentfare/proxy bundle:daemon && node scripts/assemble-sidecar.mjs"
   },
   "app": {
     "windows": [
@@ -33,6 +33,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../sidecar/": "sidecar/"
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

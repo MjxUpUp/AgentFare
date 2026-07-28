@@ -1,0 +1,110 @@
+name: Desktop
+
+# 桌面 App 打包（Tauri2）：与 npm 发布(release.yml)共用 v* tag 触发，但产物是
+# 各平台安装器(.msi/.exe/.dmg/.deb/.AppImage)，挂在 GitHub Release 上。
+# 命门：better-sqlite3 源码编译无 prebuilds → 必须每平台 native 编译；node sidecar
+# 的 node 二进制 + .node 都由 assemble-sidecar.mjs 取本机 process.execPath/build 产物，
+# 故每 matrix runner 独立构建自身架构（不做交叉编译）。
+# macOS code sign + notarize 仅在配置了 Apple secrets 时生效，否则跳过（unsigned）。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packages/gui/**"
+      - ".github/workflows/desktop.yml"
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, label: windows-x64 }
+          - { os: macos-14, target: aarch64-apple-darwin, label: macos-arm64 }
+          - { os: macos-13, target: x86_64-apple-darwin, label: macos-x64 }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, label: linux-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/gui/src-tauri
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+
+      # beforeBuildCommand 已链式完成：turbo build → bundle:daemon → assemble-sidecar。
+      # assemble-sidecar 取本机 node + 本机编译的 better-sqlite3.node，故每平台 native。
+      # Apple 签名/公证：Tauri2 在构建时读取下列 env，存在则签名+公证，缺省则 unsigned。
+      - name: Build desktop app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm --filter @agentfare/gui exec tauri build --target ${{ matrix.target }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentfare-${{ matrix.label }}
+          if-no-files-found: error
+          path: |
+            packages/gui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            packages/gui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            packages/gui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            packages/gui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            packages/gui/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+
+  release:
+    name: Attach to GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Attach installers to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*

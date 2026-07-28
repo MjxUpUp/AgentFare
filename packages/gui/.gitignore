@@ -1,3 +1,6 @@
 node_modules
 dist
 *.local
+# Production daemon sidecar (node binary + bundled daemon + native better-sqlite3).
+# ~86MB build artifact, assembled by scripts/assemble-sidecar.mjs at tauri build time.
+sidecar
