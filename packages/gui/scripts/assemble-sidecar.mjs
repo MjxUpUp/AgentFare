@@ -109,7 +109,7 @@ if (process.platform !== "win32") fs.chmodSync(nodeDest, 0o755);
 if (process.platform === "darwin" && process.env.APPLE_SIGNING_IDENTITY) {
   const r = spawnSync(
     "codesign",
-    ["--force", "--options", "runtime", "--sign", process.env.APPLE_SIGNING_IDENTITY, nodeDest],
+    ["--force", "--options", "runtime", "--timestamp", "--sign", process.env.APPLE_SIGNING_IDENTITY, nodeDest],
     { stdio: "inherit" },
   );
   if (r.status !== 0) throw new Error("[assemble-sidecar] codesign of node binary failed");

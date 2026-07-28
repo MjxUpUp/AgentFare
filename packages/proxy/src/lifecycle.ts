@@ -227,7 +227,10 @@ export async function waitForProxy(port: number, timeoutMs: number): Promise<boo
 function healthCheck(port: number): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: "localhost", port, path: "/health", method: "GET", timeout: 1000 },
+      // 127.0.0.1, not "localhost": the daemon binds IPv4 loopback only, and on
+      // IPv6-first resolvers "localhost" resolves to ::1 — the probe would fail
+      // and startProxyDaemon would report a false "failed to start" timeout.
+      { hostname: "127.0.0.1", port, path: "/health", method: "GET", timeout: 1000 },
       (res) => {
         let body = "";
         res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
