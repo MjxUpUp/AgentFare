@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/models" },
+    { "path": "packages/hook" },
+    { "path": "packages/proxy" },
+    { "path": "packages/cli" },
+    { "path": "packages/loader" },
+    { "path": "packages/setup" },
+    { "path": "packages/mcp-server" }
+  ]
+}

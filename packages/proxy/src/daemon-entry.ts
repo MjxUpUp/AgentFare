@@ -64,7 +64,7 @@ async function main(): Promise<void> {
 
   const result = await startProxy({
     port,
-    deps: { handler, costTracker, qualitySignalCollector, registry, providerMap },
+    deps: { handler, costTracker, qualitySignalCollector, registry, providerMap, db },
   });
 
   if (!result.success) {

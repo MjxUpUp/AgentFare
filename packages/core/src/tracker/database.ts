@@ -1,5 +1,13 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
+
+// core is an ESM package (type: module), where the global `require` is not
+// defined. better-sqlite3 is a CJS native module, so load it through an
+// explicit require rooted at this module's real URL — this both makes require
+// available in ESM and resolves better-sqlite3 from this file's true location
+// (side-stepping Windows junction/realpath issues under pnpm).
+const require = createRequire(import.meta.url);
 
 let Database: typeof import("better-sqlite3") | undefined;
 try {
@@ -28,6 +36,14 @@ export interface RoutingLogEntry {
 }
 
 export interface CostSummary {
+  totalRequests: number;
+  totalOriginalCost: number;
+  totalActualCost: number;
+  totalSavings: number;
+}
+
+/** SQLite row type for cost summary aggregation */
+interface CostSummaryRow {
   totalRequests: number;
   totalOriginalCost: number;
   totalActualCost: number;
@@ -82,7 +98,7 @@ CREATE TABLE IF NOT EXISTS routing_logs (
   input_tokens    INTEGER DEFAULT 0,
   output_tokens   INTEGER DEFAULT 0,
   original_cost   REAL DEFAULT 0,
-  actual_cost     REAL DEFAULT 0,
+  actual_cost   REAL DEFAULT 0,
   savings         REAL DEFAULT 0,
   quality_signal  TEXT DEFAULT NULL
 );
@@ -242,7 +258,7 @@ export class TrackingDatabase {
            FROM routing_logs`
         );
     const params = timeRange ? [`-${parseTimeRange(timeRange)}`] : [];
-    const row = stmt.get(...params) as any;
+    const row = stmt.get(...params) as CostSummaryRow;
     return {
       totalRequests: row.totalRequests,
       totalOriginalCost: row.totalOriginalCost,

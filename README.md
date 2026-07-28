@@ -24,7 +24,7 @@ npx agentfare cost
 
 ```
 Claude Code / Codex / 任意 OpenAI·Anthropic 兼容客户端
-    │  *_BASE_URL → http://localhost:8787/{anthropic|openai|...}
+    │  *_BASE_URL → http://localhost:3456/{anthropic|openai|...}
     ▼
 @agentfare/proxy ─── HTTP 代理 daemon：路由转发 + 协议转换 + failover/熔断 + 成本追踪
     │

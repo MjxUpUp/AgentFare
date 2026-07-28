@@ -19,6 +19,7 @@ import {
   detectKeyHostConflict,
   type CostTracker,
   type QualitySignalCollector,
+  type TrackingDatabase,
 } from "@agentfare/core";
 import { type ModelRegistry, type ModelEntry, findEndpointForProtocol, resolveAuthScheme } from "@agentfare/models";
 import {
@@ -35,6 +36,7 @@ import {
 } from "@agentfare/hook/pipeline";
 import { CircuitBreaker, shouldFailover, hostOf } from "@agentfare/hook/failover";
 import type { SSEProtocolConverter } from "@agentfare/hook/response-handler";
+import { handleAdminRequest, isLoopback } from "./admin.js";
 
 export interface ProxyServerDeps {
   handler: RequestHandler;
@@ -44,6 +46,12 @@ export interface ProxyServerDeps {
   registry?: ModelRegistry;
   /** Dynamic provider map (built from config). Falls back to DEFAULT if not provided. */
   providerMap?: Record<string, ProviderInfo>;
+  /**
+   * TrackingDatabase for the admin API (/api/*). Optional — admin endpoints
+   * that need it return 503 when absent. The daemon passes the same instance
+   * used by costTracker (no second connection to the SQLite file).
+   */
+  db?: TrackingDatabase;
 }
 
 export interface ProxyServerOptions {
@@ -129,6 +137,29 @@ async function handleRequest(
   if (requestPath === "/health" || requestPath === "/") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "ok", service: "agentfare-proxy" }));
+    return;
+  }
+
+  // Admin API (loopback-only). Must be handled before resolveProvider, which
+  // would 404 any non-provider path as "unknown_provider". The GUI and any
+  // local tooling read cost/logs/models here; cross-network callers are
+  // refused — these read endpoints otherwise carry no auth of their own.
+  if (requestPath === "/api" || requestPath.startsWith("/api/")) {
+    if (!isLoopback(req.socket.remoteAddress)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "forbidden", reason: "loopback_only" }));
+      return;
+    }
+    const adminUrl = new URL(req.url ?? "/", "http://localhost");
+    const query: Record<string, string | undefined> = {};
+    for (const [k, v] of adminUrl.searchParams) query[k] = v;
+    const adminRes = handleAdminRequest(req.method ?? "GET", adminUrl.pathname, query, {
+      db: options.deps.db,
+      registry: options.deps.registry,
+      providerMap: options.deps.providerMap,
+    }) ?? { status: 404, body: { error: "unknown_admin_endpoint", path: adminUrl.pathname } };
+    res.writeHead(adminRes.status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(adminRes.body));
     return;
   }
 
