@@ -22,6 +22,23 @@ function cleanupDbFiles(file: string): void {
   }
 }
 
+/**
+ * First non-internal IPv4 of the host, or undefined in a pure-loopback sandbox.
+ * Used to construct a real non-loopback peer for the 403 HTTP test —
+ * socket.remoteAddress is set by the kernel and can't be faked from userspace,
+ * so the guard's HTTP-level path is only exercisable when the host actually
+ * has a LAN address to connect from.
+ */
+function pickLanIp(): string | undefined {
+  for (const list of Object.values(os.networkInterfaces())) {
+    if (!list) continue;
+    for (const ni of list) {
+      if (ni.family === "IPv4" && !ni.internal) return ni.address;
+    }
+  }
+  return undefined;
+}
+
 function sampleEntry(i: number): RoutingLogEntry {
   return {
     sessionId: "sess-test",
@@ -140,6 +157,9 @@ describe("isLoopback", () => {
     expect(isLoopback("192.168.1.5")).toBe(false);
     expect(isLoopback("10.0.0.1")).toBe(false);
     expect(isLoopback("8.8.8.8")).toBe(false);
+    // IPv4-mapped non-loopback must NOT pass just because it carries ::ffff:
+    expect(isLoopback("::ffff:192.168.1.5")).toBe(false);
+    expect(isLoopback("::ffff:8.8.8.8")).toBe(false);
   });
   it("handles undefined", () => {
     expect(isLoopback(undefined)).toBe(false);
@@ -230,4 +250,73 @@ describe("admin HTTP endpoints (end-to-end)", () => {
     const body = await r.json();
     expect(body.error).toBe("unknown_provider");
   });
+
+  it("returns 500 admin_internal on db error without leaking internals", async () => {
+    // A db read failure (SQLITE_BUSY, schema drift, WAL corruption) must be
+    // isolated to a 500 admin_internal — it must NOT bubble to the outer 502
+    // catch, which emits `message: String(err)` and would echo the raw SQL
+    // error (column names, file paths) into the response body.
+    const breakingDb = Object.create(db) as TrackingDatabase;
+    breakingDb.getCostSummary = () => {
+      throw new Error("SqliteError: no such column: secret_col");
+    };
+    const breakingServer = createProxyServer({
+      port: 0,
+      deps: {
+        db: breakingDb,
+        registry: deps.registry,
+        providerMap: deps.providerMap,
+        handler: { handle: async () => null },
+      } as any,
+    });
+    await new Promise<void>((r) => breakingServer.listen(0, "127.0.0.1", r));
+    const addr = breakingServer.address() as http.AddressInfo;
+    try {
+      const r = await fetch(`http://127.0.0.1:${addr.port}/api/cost`);
+      expect(r.status).toBe(500);
+      const body = await r.json();
+      expect(body.error).toBe("admin_internal");
+      // Critical: the raw DB error text must NOT appear in the response.
+      expect(JSON.stringify(body)).not.toContain("secret_col");
+      expect(JSON.stringify(body)).not.toContain("SqliteError");
+    } finally {
+      await new Promise<void>((r) => breakingServer.close(() => r()));
+    }
+  });
+
+  (pickLanIp() ? it : it.skip)(
+    "refuses /api/* from a non-loopback peer with 403 (loopback guard, HTTP-level)",
+    async (ctx) => {
+      // Bind on 0.0.0.0 and connect via the host's LAN IP so the server observes
+      // a non-loopback remoteAddress. This is the one path the loopback guard
+      // exists for; without an HTTP-level check, flipping isLoopback or dropping
+      // the branch would leak cost/logs data while unit tests stay green.
+      const lanIp = pickLanIp()!;
+      const lanServer = createProxyServer({
+        port: 0,
+        deps: { ...deps, handler: { handle: async () => null } } as any,
+      });
+      await new Promise<void>((r) => lanServer.listen(0, "0.0.0.0", r));
+      const addr = lanServer.address() as http.AddressInfo;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      try {
+        let res: Response;
+        try {
+          res = await fetch(`http://${lanIp}:${addr.port}/api/cost`, { signal: ctrl.signal });
+        } catch {
+          // LAN IP unreachable from this process (firewall / pure-loopback
+          // container). Can't construct a non-loopback peer — skip, don't fail.
+          ctx.skip();
+          return;
+        }
+        expect(res.status).toBe(403);
+        const body = await res.json();
+        expect(body).toEqual({ error: "forbidden", reason: "loopback_only" });
+      } finally {
+        clearTimeout(timer);
+        await new Promise<void>((r) => lanServer.close(() => r()));
+      }
+    },
+  );
 });

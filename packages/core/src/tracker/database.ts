@@ -12,10 +12,16 @@ const require = createRequire(import.meta.url);
 let Database: typeof import("better-sqlite3") | undefined;
 try {
   Database = require("better-sqlite3");
-} catch {
-  // better-sqlite3 is an optional native dependency.
-  // It requires a C++ toolchain to compile; without it, TrackingDatabase will
-  // throw a clear error at construction time rather than failing at install.
+} catch (e) {
+  // Optional native dep, but surface the REAL failure reason to stderr.
+  // MODULE_NOT_FOUND ("not installed") is the benign case, but this same catch
+  // also swallows wrong-N-API-version, AV-blocked DLL, and broken build
+  // artifacts — without this line the constructor below prints "not available"
+  // and sends users on a fruitless reinstall loop when the binary is present
+  // but unloadable.
+  process.stderr.write(
+    `[agentfare] better-sqlite3 load failed: ${e instanceof Error ? e.message : e}\n`,
+  );
 }
 
 export interface RoutingLogEntry {
@@ -183,7 +189,7 @@ export class TrackingDatabase {
     sessionId?: string;
     tool?: string;
     stepType?: string;
-  }): RoutingLogRow[] {
+  }, limit?: number): RoutingLogRow[] {
     const conditions: string[] = [];
     const params: any[] = [];
     if (filter.sessionId) {
@@ -200,6 +206,17 @@ export class TrackingDatabase {
     }
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    // Push LIMIT into SQL instead of loading the full table into Node memory
+    // and JS-slicing — the admin /api/logs endpoint defaults to 100 rows, so
+    // a long-running daemon with 100k+ logs would otherwise deserialize every
+    // row on each refresh just to discard 99% of them.
+    if (limit !== undefined && limit > 0) {
+      return this.db
+        .prepare(
+          `SELECT * FROM routing_logs ${where} ORDER BY timestamp DESC LIMIT ?`
+        )
+        .all(...params, limit) as RoutingLogRow[];
+    }
     return this.db
       .prepare(
         `SELECT * FROM routing_logs ${where} ORDER BY timestamp DESC`

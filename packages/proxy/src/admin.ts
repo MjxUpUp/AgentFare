@@ -90,7 +90,7 @@ export function handleAdminRequest(
     case "/api/logs": {
       if (!deps.db) return { status: 503, body: { error: "db_unavailable" } };
       const limit = parseLimit(query.limit);
-      const logs = deps.db.queryLogs({}).slice(0, limit);
+      const logs = deps.db.queryLogs({}, limit);
       return { status: 200, body: { logs } };
     }
     case "/api/models": {
@@ -114,6 +114,9 @@ export function handleAdminRequest(
       return { status: 200, body: { providers: deps.providerMap ?? {} } };
     }
     default:
-      return { status: 404, body: { error: "unknown_admin_endpoint", path: pathname } };
+      // Don't echo the raw pathname back — the GUI may render this string and
+      // an attacker controlling the URL (e.g. via a crafted link) could inject
+      // markup. The error code alone is enough for the client to branch on.
+      return { status: 404, body: { error: "unknown_admin_endpoint" } };
   }
 }

@@ -36,7 +36,7 @@ import {
 } from "@agentfare/hook/pipeline";
 import { CircuitBreaker, shouldFailover, hostOf } from "@agentfare/hook/failover";
 import type { SSEProtocolConverter } from "@agentfare/hook/response-handler";
-import { handleAdminRequest, isLoopback } from "./admin.js";
+import { handleAdminRequest, isLoopback, type AdminResponse } from "./admin.js";
 
 export interface ProxyServerDeps {
   handler: RequestHandler;
@@ -153,11 +153,24 @@ async function handleRequest(
     const adminUrl = new URL(req.url ?? "/", "http://localhost");
     const query: Record<string, string | undefined> = {};
     for (const [k, v] of adminUrl.searchParams) query[k] = v;
-    const adminRes = handleAdminRequest(req.method ?? "GET", adminUrl.pathname, query, {
-      db: options.deps.db,
-      registry: options.deps.registry,
-      providerMap: options.deps.providerMap,
-    }) ?? { status: 404, body: { error: "unknown_admin_endpoint", path: adminUrl.pathname } };
+    // handleAdminRequest reads from the SQLite db / in-memory registry. A db
+    // error (SQLITE_BUSY, schema drift, WAL corruption) must NOT bubble to the
+    // outer 502 catch — that path emits `message: String(err)` and would leak
+    // SQL/column/path internals into the response body. Isolate it and return
+    // an opaque 500 instead. adminRes is always defined here because the /api
+    // prefix check above guarantees handleAdminRequest takes its switch path
+    // (default → 404), never its null "non-/api" branch; the ?? is defensive.
+    let adminRes: AdminResponse;
+    try {
+      adminRes = handleAdminRequest(req.method ?? "GET", adminUrl.pathname, query, {
+        db: options.deps.db,
+        registry: options.deps.registry,
+        providerMap: options.deps.providerMap,
+      }) ?? { status: 404, body: { error: "unknown_admin_endpoint" } };
+    } catch (adminErr) {
+      asyncLogError(`admin handler error: ${adminErr}`, "proxy");
+      adminRes = { status: 500, body: { error: "admin_internal" } };
+    }
     res.writeHead(adminRes.status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(adminRes.body));
     return;
