@@ -3,8 +3,9 @@
   "version": "0.2.1",
   "description": "HTTP proxy server with provider routing and SSE streaming for AgentFare",
   "license": "MIT",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],
@@ -19,39 +20,48 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./server": {
       "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
       "default": "./dist/server.js"
     },
     "./lifecycle": {
       "types": "./dist/lifecycle.d.ts",
+      "import": "./dist/lifecycle.js",
       "default": "./dist/lifecycle.js"
     },
     "./provider-map": {
       "types": "./dist/provider-map.d.ts",
+      "import": "./dist/provider-map.js",
       "default": "./dist/provider-map.js"
     },
     "./key-store": {
       "types": "./dist/key-store.d.ts",
+      "import": "./dist/key-store.js",
       "default": "./dist/key-store.js"
     },
     "./sse-pipe": {
       "types": "./dist/sse-pipe.d.ts",
+      "import": "./dist/sse-pipe.js",
       "default": "./dist/sse-pipe.js"
     },
     "./tool-guide": {
       "types": "./dist/tool-guide.d.ts",
+      "import": "./dist/tool-guide.js",
       "default": "./dist/tool-guide.js"
     },
     "./daemon-entry": {
       "types": "./dist/daemon-entry.d.ts",
+      "import": "./dist/daemon-entry.js",
       "default": "./dist/daemon-entry.js"
     }
   },
   "scripts": {
     "build": "tsc",
+    "bundle:daemon": "node scripts/bundle-daemon.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "node ../../scripts/prepublish-check.js"
@@ -63,6 +73,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "esbuild": "^0.21.5",
     "typescript": "^5.8",
     "vitest": "^3.2"
   }
