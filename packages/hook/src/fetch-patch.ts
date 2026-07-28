@@ -4,7 +4,7 @@ import type { RequestHandler, HandleResult } from "./request-handler.js";
 import { createStreamingResponseWrapper } from "./response-handler.js";
 import type { SSEProtocolConverter } from "./response-handler.js";
 import { resolveEffectiveBaseUrl, detectKeyHostConflict, type CostTracker, type QualitySignalCollector } from "@agentfare/core";
-import { ModelRegistry, type ModelEntry, findEndpointForProtocol, resolveAuthScheme } from "@agentfare/models";
+import { ModelRegistry, type ModelEntry, type ModelApi, findEndpointForProtocol, resolveAuthScheme } from "@agentfare/models";
 import { convertAnthropicToOpenAIResponse } from "./protocol/anthropic-to-openai.js";
 import { convertOpenAIToAnthropicResponse } from "./protocol/openai-to-anthropic-response.js";
 import {
@@ -140,13 +140,19 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
       // Cross-provider: rewrite URL, headers, and convert request body
       let sourceProtocol: "openai" | "anthropic" | null = null;
       let needsProtocolConversion = false;
+      // Selected upstream endpoint — assigned when providerSwitched, read again
+      // below to drive the response protocol. Must follow the chosen endpoint,
+      // not the model's primary api: otherwise an anthropic client hitting a
+      // DeepSeek anthropic endpoint gets parsed with the OpenAI SSE extractor
+      // (zero tokens → cost tracking silently broken).
+      let targetApi: ModelApi | undefined;
 
       if (result.decision.providerSwitched) {
         // Detect source protocol early so we can pick a matching endpoint below.
         sourceProtocol = detectProtocol(url);
         // Pick the endpoint whose protocol matches the client's (e.g. Claude Code
         // anthropic → a DeepSeek/Kimi model's anthropic endpoint) → zero conversion.
-        const targetApi = findEndpointForProtocol(targetModel, sourceProtocol);
+        targetApi = findEndpointForProtocol(targetModel, sourceProtocol);
         // ISSUE: previously used targetApi.baseUrl (official), ignoring the user's
         // relay upstreamUrl — relay keys hit the official endpoint (ban risk).
         const providerUpstreamBaseUrl = options.providerUpstreamBaseUrls?.[targetModel.provider];
@@ -257,9 +263,10 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
       const safeDecision = sanitizeDecisionForCallback(result.decision);
       options.onRouting?.({ ...result, decision: safeDecision } as HandleResult);
 
-      // ISSUE-028: Protocol conversion — convert response when crossing providers
+      // ISSUE-028: Protocol conversion — convert response when crossing providers.
+      // Use the SELECTED endpoint's protocol (方案A), not the model's primary api.
       const protocol = result.decision.providerSwitched
-        ? targetModel.api.protocol
+        ? (targetApi?.protocol ?? targetModel.api.protocol)
         : detectProtocol(url);
 
       // Streaming response: wrap with optional SSE protocol converter

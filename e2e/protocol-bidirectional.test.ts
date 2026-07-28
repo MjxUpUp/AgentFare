@@ -295,4 +295,87 @@ describe("E2E: Protocol bidirectional conversion", () => {
     expect(text).toContain("chat.completion.chunk");
     expect(text).toContain("[DONE]");
   });
+
+  it("should track non-zero streaming cost when hitting DeepSeek's anthropic endpoint (方案A response protocol)", async () => {
+    // Regression guard for fetch-patch.ts:261. The response protocol must follow
+    // the SELECTED endpoint (deepseek anthropic), not the model's primary api
+    // (deepseek openai). Before the fix, the OpenAI extractor parsed the anthropic
+    // SSE and recorded output_tokens=0 — cost tracking silently broken in the core
+    // zero-conversion scenario.
+    globalThis.fetch = async () => {
+      const sseBody = makeAnthropicStream("done", 30, 10); // input 30, output 10
+      return new Response(sseBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    };
+
+    const registry = new ModelRegistry();
+    const deepseekModel = registry.get("deepseek/v4-flash")!;
+
+    const recorded: any[] = [];
+    const mockCostTracker = { record: (...args: any[]) => recorded.push(args) };
+
+    const mockHandler: RequestHandler = {
+      handle: async () =>
+        ({
+          decision: {
+            targetModel: deepseekModel,
+            providerSwitched: true,
+            crossProviderMode: "opt-in" as const,
+            apiKey: process.env.DEEPSEEK_API_KEY,
+            reasoning: "anthropic client → deepseek anthropic endpoint, streaming",
+          },
+          modifiedBody: JSON.stringify({
+            model: deepseekModel.api.modelId,
+            messages: [{ role: "user", content: "yes" }],
+            max_tokens: 1024,
+            stream: true,
+          }),
+          analysis: {
+            stepType: "confirmation",
+            difficulty: 0.05,
+            confidence: 0.95,
+            recommendedTier: "fast",
+            recommendedModel: deepseekModel.id,
+            reasoning: "confirmation",
+            needsProviderSwitch: true,
+            estimatedTokens: { input: 30, output: 10 },
+            alternatives: [],
+          },
+          sessionId: "ad-stream-cost-1",
+        }) as HandleResult,
+    } as any as RequestHandler;
+
+    uninstall = installFetchPatch({
+      handler: mockHandler,
+      costTracker: mockCostTracker as any,
+    });
+
+    const response = await globalThis.fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        model: "claude-opus-4-6",
+        messages: [{ role: "user", content: "yes" }],
+        max_tokens: 1024,
+        stream: true,
+      }),
+      headers: { "Content-Type": "application/json", "x-api-key": "sk-ant-test-key" },
+    });
+
+    expect(response.status).toBe(200);
+    // Consume the stream so the transform runs and onTokens fires.
+    const text = await response.text();
+    // Zero conversion: anthropic SSE is passed through untouched.
+    expect(text).toContain("message_start");
+    expect(text).toContain("message_delta");
+
+    // costTracker.record's 7th arg is the parsed token usage.
+    expect(recorded.length).toBeGreaterThanOrEqual(1);
+    const tokens = recorded[0][6];
+    // 方案A: anthropic extractor correctly parsed message_start.input_tokens (30)
+    // and message_delta.output_tokens (10). Pre-fix this was {input:0, output:0}.
+    expect(tokens.input).toBe(30);
+    expect(tokens.output).toBe(10);
+  });
 });
