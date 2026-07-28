@@ -20,7 +20,7 @@ import {
   type CostTracker,
   type QualitySignalCollector,
 } from "@agentfare/core";
-import type { ModelRegistry, ModelEntry } from "@agentfare/models";
+import { type ModelRegistry, type ModelEntry, findEndpointForProtocol, resolveAuthScheme } from "@agentfare/models";
 import {
   ANALYZER_TIMEOUT_MS,
   PASS_THROUGH_ANALYSIS,
@@ -216,7 +216,10 @@ async function handleRequest(
 
   if (result && result.decision.targetModel) {
     const targetModel = result.decision.targetModel;
-    const targetApi = targetModel.api;
+    // Pick the endpoint whose protocol matches the client's source protocol.
+    // Claude Code (anthropic) → a DeepSeek/Kimi/Zhipu model hits that vendor's
+    // anthropic-compatible endpoint directly, avoiding openai↔anthropic conversion.
+    const targetApi = findEndpointForProtocol(targetModel, sourceProtocol);
 
     if (result.decision.providerSwitched) {
       // Cross-provider routing.
@@ -261,7 +264,7 @@ async function handleRequest(
         // Resolve API key for target provider
         const apiKey = result.decision.apiKey ?? resolveApiKey(targetModel.provider, headers);
         if (apiKey) {
-          targetHeaders = { ...headers, ...buildAuthHeaders(targetModel.provider, apiKey, targetApi.protocol) };
+          targetHeaders = { ...headers, ...buildAuthHeaders(targetModel.provider, apiKey, resolveAuthScheme(targetApi)) };
           // Remove conflicting auth headers
           if (targetApi.protocol === "anthropic") {
             delete targetHeaders["Authorization"];
@@ -295,7 +298,7 @@ async function handleRequest(
     if (!resolveApiKey(providerInfo.provider, targetHeaders)) {
       const key = resolveApiKey(providerInfo.provider, headers);
       if (key) {
-        targetHeaders = { ...targetHeaders, ...buildAuthHeaders(providerInfo.provider, key, providerInfo.protocol) };
+        targetHeaders = { ...targetHeaders, ...buildAuthHeaders(providerInfo.provider, key, resolveAuthScheme({ protocol: providerInfo.protocol })) };
       }
     }
   }
@@ -575,10 +578,16 @@ function forwardRequest(
     });
 
     upstreamReq.setTimeout(UPSTREAM_TIMEOUT_MS, () => {
-      upstreamReq.destroy(new Error("upstream timeout"));
+      upstreamReq.destroy(new Error("UPSTREAM_TIMEOUT"));
     });
 
-    upstreamReq.on("error", reject);
+    upstreamReq.on("error", (err) => {
+      if (err.message === "UPSTREAM_TIMEOUT") {
+        reject(new Error(`Upstream request timed out after ${UPSTREAM_TIMEOUT_MS}ms`));
+      } else {
+        reject(err);
+      }
+    });
     upstreamReq.write(body);
     upstreamReq.end();
   });

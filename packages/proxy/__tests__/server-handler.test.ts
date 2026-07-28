@@ -103,13 +103,13 @@ describe("proxy server request routing logic", () => {
 
   describe("buildAuthHeaders", () => {
     it("should build Bearer auth for openai protocol", () => {
-      const h = buildAuthHeaders("openai", "sk-test", "openai");
+      const h = buildAuthHeaders("openai", "sk-test", "bearer");
       expect(h["Authorization"]).toBe("Bearer sk-test");
       expect(h["x-api-key"]).toBeUndefined();
     });
 
     it("should build x-api-key auth for anthropic protocol", () => {
-      const h = buildAuthHeaders("anthropic", "sk-ant", "anthropic");
+      const h = buildAuthHeaders("anthropic", "sk-ant", "x-api-key");
       expect(h["x-api-key"]).toBe("sk-ant");
       expect(h["anthropic-version"]).toBe("2023-06-01");
       expect(h["Authorization"]).toBeUndefined();

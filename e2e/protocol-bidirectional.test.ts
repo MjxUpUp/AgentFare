@@ -129,7 +129,7 @@ describe("E2E: Protocol bidirectional conversion", () => {
     expect(respBody.usage.completion_tokens).toBe(20);
   });
 
-  it("should convert Anthropic request body to OpenAI format when routing to OpenAI-compatible endpoint (ISSUE-028)", async () => {
+  it("should hit DeepSeek's Anthropic endpoint with zero conversion (方案A: protocol match first)", async () => {
     const captured: any[] = [];
     globalThis.fetch = async (input, init) => {
       captured.push({
@@ -137,18 +137,17 @@ describe("E2E: Protocol bidirectional conversion", () => {
         body: (init as any)?.body,
         headers: (init as any)?.headers,
       });
-      // Return OpenAI-format response
+      // 方案A: DeepSeek's anthropic endpoint returns native Anthropic format;
+      // no conversion in either direction.
       return new Response(
         JSON.stringify({
-          id: "chatcmpl-test",
-          object: "chat.completion",
-          model: "deepseek-chat",
-          choices: [{
-            index: 0,
-            message: { role: "assistant", content: "Task completed" },
-            finish_reason: "stop",
-          }],
-          usage: { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 },
+          id: "msg_test",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "Task completed" }],
+          model: "deepseek-v4-flash",
+          stop_reason: "end_turn",
+          usage: { input_tokens: 30, output_tokens: 10 },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
@@ -202,14 +201,17 @@ describe("E2E: Protocol bidirectional conversion", () => {
       headers: { "Content-Type": "application/json", "x-api-key": "sk-ant-original-key" },
     });
 
-    // Verify the request was sent to DeepSeek (OpenAI-compatible)
+    // 方案A: anthropic source → DeepSeek's anthropic endpoint (zero conversion).
     expect(captured.length).toBeGreaterThanOrEqual(1);
     const req = captured[0];
     expect(req.url).toContain("deepseek.com");
-    expect(req.url).toContain("/chat/completions");
-    expect(req.headers?.Authorization).toContain("sk-deepseek-test-key");
+    expect(req.url).toContain("/anthropic/v1/messages");
+    expect(req.url).not.toContain("/chat/completions");
+    // DeepSeek's anthropic endpoint uses x-api-key.
+    expect(req.headers?.["x-api-key"]).toBe("sk-deepseek-test-key");
+    expect(req.headers?.["anthropic-version"]).toBe("2023-06-01");
 
-    // Verify the response was converted back to Anthropic format
+    // Response is native Anthropic (no conversion) — passed through unchanged.
     const respBody = await response.json();
     expect(respBody.type).toBe("message");
     expect(respBody.role).toBe("assistant");

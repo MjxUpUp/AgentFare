@@ -4,8 +4,7 @@ import type { RequestHandler, HandleResult } from "./request-handler.js";
 import { createStreamingResponseWrapper } from "./response-handler.js";
 import type { SSEProtocolConverter } from "./response-handler.js";
 import { resolveEffectiveBaseUrl, detectKeyHostConflict, type CostTracker, type QualitySignalCollector } from "@agentfare/core";
-import { ModelRegistry } from "@agentfare/models";
-import type { ModelEntry } from "@agentfare/models";
+import { ModelRegistry, type ModelEntry, findEndpointForProtocol, resolveAuthScheme } from "@agentfare/models";
 import { convertAnthropicToOpenAIResponse } from "./protocol/anthropic-to-openai.js";
 import { convertOpenAIToAnthropicResponse } from "./protocol/openai-to-anthropic-response.js";
 import {
@@ -143,7 +142,11 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
       let needsProtocolConversion = false;
 
       if (result.decision.providerSwitched) {
-        const targetApi = targetModel.api;
+        // Detect source protocol early so we can pick a matching endpoint below.
+        sourceProtocol = detectProtocol(url);
+        // Pick the endpoint whose protocol matches the client's (e.g. Claude Code
+        // anthropic → a DeepSeek/Kimi model's anthropic endpoint) → zero conversion.
+        const targetApi = findEndpointForProtocol(targetModel, sourceProtocol);
         // ISSUE: previously used targetApi.baseUrl (official), ignoring the user's
         // relay upstreamUrl — relay keys hit the official endpoint (ban risk).
         const providerUpstreamBaseUrl = options.providerUpstreamBaseUrls?.[targetModel.provider];
@@ -168,8 +171,6 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
           // Keep input/init at their original values (no cross-provider rewrite).
           // The request reaches the client's configured provider, not the vendor.
         } else {
-          // Detect source protocol from original URL
-          sourceProtocol = detectProtocol(url);
           const targetProtocol = targetApi.protocol;
           needsProtocolConversion = sourceProtocol !== targetProtocol;
 
@@ -179,7 +180,9 @@ export function installFetchPatch(options: FetchPatchOptions): () => void {
 
           if (result.decision.apiKey) {
             const authHeaders: Record<string, string> = { ...headers };
-            if (targetApi.protocol === "anthropic") {
+            // Auth scheme follows the chosen endpoint, not the protocol — Kimi's
+            // anthropic endpoint uses Bearer, DeepSeek's uses x-api-key.
+            if (resolveAuthScheme(targetApi) === "x-api-key") {
               delete authHeaders["Authorization"];
               authHeaders["x-api-key"] = result.decision.apiKey;
               authHeaders["anthropic-version"] = "2023-06-01";

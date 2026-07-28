@@ -108,6 +108,12 @@ export const BUILTIN_MODELS: ModelEntry[] = [
     capabilities: { codeGeneration: 9, codeReview: 8, planning: 8, reasoning: 9, toolUse: 8, contextWindow: 128, maxOutputTokens: 16, streaming: true, jsonMode: true },
     routing: { avgLatencyMs: 1500, tokensPerSecond: 50, availability: 0.995, region: ["cn", "global"] },
     api: { protocol: "openai", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-pro" },
+    // DeepSeek also exposes an Anthropic-compatible endpoint. Claude Code (anthropic)
+    // requests hit it directly → zero openai↔anthropic conversion, no field loss.
+    // Docs: api-docs.deepseek.com/zh-cn/guides/anthropic_api (x-api-key auth; claude-opus→v4-pro auto-map).
+    endpoints: [
+      { protocol: "anthropic", baseUrl: "https://api.deepseek.com/anthropic", modelId: "deepseek-v4-pro", authScheme: "x-api-key" },
+    ],
   },
   {
     id: "deepseek/v4-flash",
@@ -118,6 +124,10 @@ export const BUILTIN_MODELS: ModelEntry[] = [
     capabilities: { codeGeneration: 7, codeReview: 6, planning: 7, reasoning: 7, toolUse: 7, contextWindow: 1000, maxOutputTokens: 16, streaming: true, jsonMode: true },
     routing: { avgLatencyMs: 500, tokensPerSecond: 120, availability: 0.995, region: ["cn", "global"] },
     api: { protocol: "openai", baseUrl: "https://api.deepseek.com", modelId: "deepseek-v4-flash" },
+    // Anthropic-compatible endpoint (claude-haiku/sonnet→v4-flash auto-map). See v4-pro note.
+    endpoints: [
+      { protocol: "anthropic", baseUrl: "https://api.deepseek.com/anthropic", modelId: "deepseek-v4-flash", authScheme: "x-api-key" },
+    ],
   },
 
   // === 智谱 ===
@@ -130,6 +140,11 @@ export const BUILTIN_MODELS: ModelEntry[] = [
     capabilities: { codeGeneration: 8, codeReview: 8, planning: 8, reasoning: 8, toolUse: 8, contextWindow: 200, maxOutputTokens: 16, streaming: true, jsonMode: true },
     routing: { avgLatencyMs: 1500, tokensPerSecond: 50, availability: 0.99, region: ["cn"] },
     api: { protocol: "openai", baseUrl: "https://open.bigmodel.cn/api/paas/v4", modelId: "glm-5" },
+    // Zhipu Anthropic-compatible endpoint (ISSUE-106: open.bigmodel.cn/api/anthropic).
+    // Auth scheme unconfirmed in docs → left unset, resolveAuthScheme falls back to x-api-key.
+    endpoints: [
+      { protocol: "anthropic", baseUrl: "https://open.bigmodel.cn/api/anthropic", modelId: "glm-5" },
+    ],
   },
 
   // === 月之暗面 ===
@@ -142,6 +157,11 @@ export const BUILTIN_MODELS: ModelEntry[] = [
     capabilities: { codeGeneration: 8, codeReview: 7, planning: 8, reasoning: 8, toolUse: 7, contextWindow: 128, maxOutputTokens: 16, streaming: true, jsonMode: true },
     routing: { avgLatencyMs: 1200, tokensPerSecond: 60, availability: 0.99, region: ["cn"] },
     api: { protocol: "openai", baseUrl: "https://api.moonshot.cn/v1", modelId: "kimi-k2.6" },
+    // Kimi Anthropic-compatible endpoint (api.moonshot.cn/anthropic). Uses Bearer auth
+    // (ANTHROPIC_AUTH_TOKEN), NOT x-api-key — authScheme set explicitly. Docs: platform.kimi.com.
+    endpoints: [
+      { protocol: "anthropic", baseUrl: "https://api.moonshot.cn/anthropic", modelId: "kimi-k2.6", authScheme: "bearer" },
+    ],
   },
 
   // === 阿里 ===
@@ -154,6 +174,10 @@ export const BUILTIN_MODELS: ModelEntry[] = [
     capabilities: { codeGeneration: 8, codeReview: 8, planning: 8, reasoning: 8, toolUse: 8, contextWindow: 262, maxOutputTokens: 16, streaming: true, jsonMode: true },
     routing: { avgLatencyMs: 1000, tokensPerSecond: 70, availability: 0.995, region: ["cn"] },
     api: { protocol: "openai", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", modelId: "qwen3-max" },
+    // Alibaba Bailian also exposes an Anthropic-compatible Messages endpoint, but it is
+    // workspace-scoped: https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic — NOT a
+    // fixed URL, so it cannot be hardcoded here. Users configure it via providers.alibaba.upstreamUrl
+    // (ISSUE-106 mechanism). x-api-key or Bearer auth. Docs: help.aliyun.com/zh/model-studio/anthropic-api-messages.
   },
 
   // === 小米 ===

@@ -24,10 +24,18 @@ export interface ModelRouting {
   region: ("us" | "cn" | "global")[];
 }
 
+export type AuthScheme = "bearer" | "x-api-key" | "sigv4" | "oauth";
+
 export interface ModelApi {
   protocol: "openai" | "anthropic";
   baseUrl: string;
   modelId: string;
+  /**
+   * Auth scheme for this endpoint. If omitted, derived from `protocol`
+   * (anthropic → x-api-key, openai → bearer) for backward compatibility.
+   * Vendors that deviate (e.g. Kimi's Anthropic endpoint uses Bearer) set this explicitly.
+   */
+  authScheme?: AuthScheme;
 }
 
 export interface ModelEntry {
@@ -39,7 +47,15 @@ export interface ModelEntry {
   pricing: ModelPricing;
   capabilities: ModelCapabilities;
   routing: ModelRouting;
+  /** Primary endpoint. Always treated as the first entry of the endpoint set. */
   api: ModelApi;
+  /**
+   * Additional protocol endpoints for the same model — e.g. a domestic vendor
+   * exposing both OpenAI- and Anthropic-compatible URLs. Lets a request pick the
+   * endpoint whose protocol matches the client, avoiding protocol conversion.
+   * (方案A: multi-endpoint per model.)
+   */
+  endpoints?: ModelApi[];
 }
 
 export type ModelTier = "fast" | "standard" | "powerful";

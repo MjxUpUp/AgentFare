@@ -286,4 +286,25 @@ describe("convertAnthropicToOpenAIRequest", () => {
     expect(result.max_tokens).toBe(1024);
     expect(result.max_completion_tokens).toBeUndefined();
   });
+
+  it("injects stream_options.include_usage when streaming (cost tracking)", () => {
+    const result = convertAnthropicToOpenAIRequest({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+      stream: true,
+    }, "gpt-4o");
+    // Without this, OpenAI SSE omits usage and cost tracking starves.
+    expect(result.stream_options).toEqual({ include_usage: true });
+  });
+
+  it("omits stream_options for non-streaming requests", () => {
+    const result = convertAnthropicToOpenAIRequest({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+      stream: false,
+    }, "gpt-4o");
+    expect(result.stream_options).toBeUndefined();
+  });
 });

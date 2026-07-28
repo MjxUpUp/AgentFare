@@ -134,7 +134,7 @@ describe("E2E: Cross-provider protocol conversion", () => {
     expect(captured[0].url).toContain("openai");
   });
 
-  it("should rewrite URL to DeepSeek OpenAI-compatible endpoint when cross-routing from Anthropic", async () => {
+  it("should hit DeepSeek's Anthropic-compatible endpoint with zero conversion (方案A)", async () => {
     const captured: any[] = [];
     globalThis.fetch = async (input, init) => {
       captured.push({
@@ -142,14 +142,16 @@ describe("E2E: Cross-provider protocol conversion", () => {
         body: (init as any)?.body,
         headers: (init as any)?.headers,
       });
+      // 方案A: DeepSeek exposes an Anthropic-compatible endpoint; the hop hits
+      // it directly, so the upstream response is native Anthropic, not converted.
       return new Response(
         JSON.stringify({
-          id: "test",
-          object: "chat.completion",
-          choices: [
-            { index: 0, message: { role: "assistant", content: "done" }, finish_reason: "stop" },
-          ],
-          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          id: "msg-test",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+          usage: { input_tokens: 10, output_tokens: 5 },
+          stop_reason: "end_turn",
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
@@ -198,12 +200,15 @@ describe("E2E: Cross-provider protocol conversion", () => {
     expect(captured.length).toBeGreaterThanOrEqual(1);
     const req = captured[0];
 
-    // URL should be rewritten to DeepSeek (OpenAI-compatible endpoint)
+    // 方案A: anthropic source matches DeepSeek's anthropic endpoint → zero
+    // conversion. URL hits the Anthropic-compatible path, not /chat/completions.
     expect(req.url).toContain("deepseek.com");
-    expect(req.url).toContain("/chat/completions");
+    expect(req.url).toContain("/anthropic/v1/messages");
+    expect(req.url).not.toContain("/chat/completions");
 
-    // Auth should use Bearer with DeepSeek key
-    expect(req.headers?.Authorization).toContain("test-deepseek-key");
+    // DeepSeek's Anthropic endpoint uses x-api-key (not Bearer).
+    expect(req.headers?.["x-api-key"]).toBe("test-deepseek-key");
+    expect(req.headers?.["anthropic-version"]).toBe("2023-06-01");
   });
 
   it("should use enterprise baseUrl instead of default when enterprise config provided", async () => {
@@ -325,5 +330,77 @@ describe("E2E: Cross-provider protocol conversion", () => {
     expect(result.usage.prompt_tokens).toBe(100);
     expect(result.usage.completion_tokens).toBe(50);
     expect(result.usage.total_tokens).toBe(150);
+  });
+
+  it("should fall back to OpenAI endpoint + protocol conversion when target has no anthropic endpoint (方案A fallback)", async () => {
+    // 方案A fallback branch: a pure-OpenAI model has no anthropic endpoint, so
+    // an anthropic client request must still convert anthropic→openai and hit
+    // /chat/completions. (DeepSeek/Kimi hit their anthropic endpoint instead.)
+    const captured: any[] = [];
+    globalThis.fetch = async (input, init) => {
+      captured.push({
+        url: typeof input === "string" ? input : "",
+        headers: (init as any)?.headers,
+      });
+      return new Response(
+        JSON.stringify({
+          id: "chatcmpl-fb",
+          object: "chat.completion",
+          choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const registry = new ModelRegistry();
+    const openaiModel = registry.get("openai/gpt-5.5")!;
+    expect(openaiModel).toBeDefined();
+
+    const mockHandler: RequestHandler = {
+      handle: async () =>
+        ({
+          decision: {
+            targetModel: openaiModel,
+            providerSwitched: true,
+            crossProviderMode: "opt-in" as const,
+            apiKey: process.env.ANTHROPIC_API_KEY,
+            reasoning: "fallback: pure-openai target needs conversion",
+          },
+          modifiedBody: JSON.stringify({ model: openaiModel.api.modelId, messages: [] }),
+          analysis: {
+            stepType: "simple_tool_use",
+            difficulty: 0.1,
+            confidence: 0.9,
+            recommendedTier: "fast",
+            recommendedModel: openaiModel.id,
+            reasoning: "fast task",
+            needsProviderSwitch: true,
+            estimatedTokens: { input: 50, output: 20 },
+            alternatives: [],
+          },
+          sessionId: "ad-test-protocol-fallback",
+        }) as HandleResult,
+    } as any as RequestHandler;
+
+    uninstall = installFetchPatch({ handler: mockHandler });
+
+    await globalThis.fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        model: "claude-opus-4-6",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "list files" }],
+      }),
+      headers: { "Content-Type": "application/json", "x-api-key": "sk-ant-test-key" },
+    });
+
+    expect(captured.length).toBeGreaterThanOrEqual(1);
+    const req = captured[0];
+    // No anthropic endpoint on gpt-5.5 → falls back to OpenAI endpoint + conversion.
+    expect(req.url).toContain("/chat/completions");
+    expect(req.url).not.toContain("/v1/messages");
+    // OpenAI endpoint → Bearer auth.
+    expect(req.headers?.Authorization).toContain("test-anthropic-key");
   });
 });

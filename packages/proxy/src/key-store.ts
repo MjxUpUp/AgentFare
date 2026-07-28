@@ -8,7 +8,7 @@
  *    re-loads on mtime change so CLI writes reach a running daemon.
  */
 
-import { PROVIDER_ENV_KEY_MAP } from "@agentfare/models";
+import { PROVIDER_ENV_KEY_MAP, type AuthScheme } from "@agentfare/models";
 import { loadKeysFromDisk } from "./credential-store.js";
 
 /**
@@ -60,20 +60,32 @@ export function resolveApiKey(
 }
 
 /**
- * Build auth headers for the upstream request.
+ * Build auth headers for the upstream request, keyed by auth scheme rather than
+ * protocol — because a single protocol can use different schemes across vendors
+ * (e.g. DeepSeek's Anthropic endpoint takes x-api-key, Kimi's takes Bearer).
+ *
+ * Callers pass `resolveAuthScheme(endpoint)` so unset schemes derive from protocol.
  */
 export function buildAuthHeaders(
   provider: string,
   apiKey: string,
-  protocol: "openai" | "anthropic",
+  authScheme: AuthScheme,
 ): Record<string, string> {
-  if (protocol === "anthropic") {
-    return {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    };
+  switch (authScheme) {
+    case "x-api-key":
+      return {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      };
+    case "bearer":
+      return {
+        "Authorization": `Bearer ${apiKey}`,
+      };
+    case "sigv4":
+      // Bedrock SigV4 signing is not yet wired (requires AWS SDK + IAM creds).
+      // Throw loudly rather than silently sending an unsigned request.
+      throw new Error(`SigV4 auth for provider "${provider}" is not implemented (Bedrock)`);
+    case "oauth":
+      throw new Error(`OAuth auth for provider "${provider}" is not implemented (Vertex)`);
   }
-  return {
-    "Authorization": `Bearer ${apiKey}`,
-  };
 }

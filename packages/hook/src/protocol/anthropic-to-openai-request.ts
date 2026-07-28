@@ -9,6 +9,10 @@ interface AnthropicRequest {
   stream: boolean;
   temperature?: number;
   stop_sequences?: string[];
+  // Extended thinking — dropped on conversion: OpenAI reasoning models use
+  // reasoning_effort (a different control surface), so no faithful mapping.
+  // Declared so the field is typed rather than silently any'd.
+  thinking?: { type: string; budget_tokens?: number };
 }
 
 interface OpenAIChatMessage {
@@ -28,6 +32,7 @@ interface OpenAIRequest {
   max_tokens?: number;
   max_completion_tokens?: number;
   stream?: boolean;
+  stream_options?: { include_usage: boolean };
   tools?: any[];
   temperature?: number;
   stop?: string[];
@@ -49,6 +54,10 @@ export function convertAnthropicToOpenAIRequest(
       ? { max_completion_tokens: anthropic.max_tokens }
       : { max_tokens: anthropic.max_tokens }),
     stream: anthropic.stream,
+    // OpenAI streaming omits usage unless stream_options.include_usage is set.
+    // Anthropic SSE always carries usage in the final message_delta; without
+    // this, a cross-provider hop onto an OpenAI model starves cost tracking.
+    ...(anthropic.stream ? { stream_options: { include_usage: true } } : {}),
   };
 
   // Anthropic system prompt -> OpenAI system message

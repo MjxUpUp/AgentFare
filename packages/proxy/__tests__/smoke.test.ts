@@ -40,13 +40,13 @@ describe("provider-map", () => {
 
 describe("key-store", () => {
   it("builds openai auth headers", () => {
-    const h = buildAuthHeaders("openai", "sk-test", "openai");
+    const h = buildAuthHeaders("openai", "sk-test", "bearer");
     expect(h["Authorization"]).toBe("Bearer sk-test");
     expect(h["x-api-key"]).toBeUndefined();
   });
 
   it("builds anthropic auth headers", () => {
-    const h = buildAuthHeaders("anthropic", "sk-ant", "anthropic");
+    const h = buildAuthHeaders("anthropic", "sk-ant", "x-api-key");
     expect(h["x-api-key"]).toBe("sk-ant");
     expect(h["anthropic-version"]).toBe("2023-06-01");
   });
