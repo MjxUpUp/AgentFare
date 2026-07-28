@@ -67,8 +67,14 @@ export interface ProviderInfo {
   upstreamBaseUrl: string;
 }
 
+// In dev (vite) the dev proxy forwards /api + /health to 127.0.0.1:3456, so a
+// relative path works. In a Tauri production build the webview origin is
+// tauri://localhost, where a relative /api/* would 404 — point straight at the
+// loopback daemon instead. (vitest runs with DEV=true, so tests stay relative.)
+const BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:3456";
+
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+  const res = await fetch(BASE + path);
   if (!res.ok) {
     let detail = "";
     try {

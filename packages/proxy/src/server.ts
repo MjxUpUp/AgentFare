@@ -89,6 +89,27 @@ const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
 ]);
 
 /**
+ * CORS headers for the read-only admin + health endpoints.
+ *
+ * The production GUI ships as a Tauri webview whose origin is
+ * `tauri://localhost` (macOS/Linux) or `http://tauri.localhost` (Windows
+ * WebView2) — a different origin from the loopback daemon at 127.0.0.1:3456.
+ * Without `Access-Control-Allow-Origin` the webview blocks JS from reading the
+ * response and the GUI renders permanently offline. Allowing any origin is
+ * safe: these endpoints are loopback-only (the socket-level `isLoopback` gate
+ * in the /api branch is the real auth boundary) and strictly read-only GET, so
+ * CORS is only a browser-read gate layered on top. The proxy POST path
+ * (upstream LLM calls) intentionally does NOT send these — it is consumed by
+ * SDK clients, not browsers.
+ */
+const READ_ENDPOINT_CORS_HEADERS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-allow-headers": "Content-Type",
+  "access-control-max-age": "86400",
+};
+
+/**
  * Per-host circuit breaker for upstream providers. Module-level singleton so a
  * tripped host is short-circuited for the lifetime of the daemon process.
  */
@@ -135,7 +156,12 @@ async function handleRequest(
 
   // Health check
   if (requestPath === "/health" || requestPath === "/") {
-    res.writeHead(200, { "Content-Type": "application/json" });
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, READ_ENDPOINT_CORS_HEADERS);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json", ...READ_ENDPOINT_CORS_HEADERS });
     res.end(JSON.stringify({ status: "ok", service: "agentfare-proxy" }));
     return;
   }
@@ -148,6 +174,14 @@ async function handleRequest(
     if (!isLoopback(req.socket.remoteAddress)) {
       res.writeHead(403, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "forbidden", reason: "loopback_only" }));
+      return;
+    }
+    // CORS preflight for the admin API. The webview GUI is a cross-origin
+    // caller (see READ_ENDPOINT_CORS_HEADERS); answer OPTIONS before
+    // handleAdminRequest, which would otherwise return 405 for non-GET.
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, READ_ENDPOINT_CORS_HEADERS);
+      res.end();
       return;
     }
     const adminUrl = new URL(req.url ?? "/", "http://localhost");
@@ -171,7 +205,7 @@ async function handleRequest(
       asyncLogError(`admin handler error: ${adminErr}`, "proxy");
       adminRes = { status: 500, body: { error: "admin_internal" } };
     }
-    res.writeHead(adminRes.status, { "Content-Type": "application/json" });
+    res.writeHead(adminRes.status, { "Content-Type": "application/json", ...READ_ENDPOINT_CORS_HEADERS });
     res.end(JSON.stringify(adminRes.body));
     return;
   }
