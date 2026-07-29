@@ -58,37 +58,53 @@ function getLineAndColumn(text: string, position: number): { line: number; colum
 }
 
 /**
- * Validate required configuration fields (for non-partial configs)
+ * Validate configuration structure.
+ *
+ * `isPartial` governs only required-field *presence*: a partial (global/project
+ * override) config may omit sections without error — mergeConfig backfills them
+ * from DEFAULT_CONFIG. But when a field IS present, its shape/value is validated
+ * in every mode. A malformed override (e.g. `routing.defaultStrategy: 123`)
+ * would otherwise be silently deep-merged over the default — deepMerge replaces
+ * a mismatched-type override verbatim (it only recurses when both sides are
+ * objects) — polluting the final config and failing at an unrelated call site.
+ * loadConfigFile catches the thrown error for partial configs and warns instead
+ * of aborting, so a bad override is surfaced rather than swallowed.
  */
 function validateConfig(config: any, configType: string, isPartial: boolean = false): void {
   const errors: string[] = [];
 
   if (configType === "AgentFareConfig") {
-    if (!config.models || typeof config.models !== "object") {
-      if (!isPartial) errors.push("Missing or invalid 'models' section");
+    if (config.models === undefined || config.models === null) {
+      if (!isPartial) errors.push("Missing 'models' section");
+    } else if (typeof config.models !== "object") {
+      errors.push("Invalid 'models' section: expected an object");
     } else {
       const tiers = ["fast", "standard", "powerful"];
       for (const tier of tiers) {
-        if (!Array.isArray(config.models[tier])) {
-          if (!isPartial) errors.push(`'models.${tier}' must be an array`);
+        if (config.models[tier] !== undefined && !Array.isArray(config.models[tier])) {
+          errors.push(`'models.${tier}' must be an array`);
         }
       }
     }
 
-    if (!config.routing || typeof config.routing !== "object") {
-      if (!isPartial) errors.push("Missing or invalid 'routing' section");
+    if (config.routing === undefined || config.routing === null) {
+      if (!isPartial) errors.push("Missing 'routing' section");
+    } else if (typeof config.routing !== "object") {
+      errors.push("Invalid 'routing' section: expected an object");
     } else {
       const validStrategies = ["cost-optimal", "quality-first", "balanced"];
-      if (!validStrategies.includes(config.routing.defaultStrategy)) {
-        if (!isPartial) errors.push(`Invalid routing.defaultStrategy: must be one of ${validStrategies.join(", ")}`);
+      if (config.routing.defaultStrategy !== undefined && !validStrategies.includes(config.routing.defaultStrategy)) {
+        errors.push(`Invalid routing.defaultStrategy: must be one of ${validStrategies.join(", ")}`);
       }
-      if (typeof config.routing.analyzerModel !== "string") {
-        if (!isPartial) errors.push("'routing.analyzerModel' must be a string");
+      if (config.routing.analyzerModel !== undefined && typeof config.routing.analyzerModel !== "string") {
+        errors.push("'routing.analyzerModel' must be a string");
       }
     }
 
-    if (!config.providers || typeof config.providers !== "object") {
-      if (!isPartial) errors.push("Missing or invalid 'providers' section");
+    if (config.providers === undefined || config.providers === null) {
+      if (!isPartial) errors.push("Missing 'providers' section");
+    } else if (typeof config.providers !== "object") {
+      errors.push("Invalid 'providers' section: expected an object");
     }
   }
 

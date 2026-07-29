@@ -1,5 +1,4 @@
-import type { ModelRegistry, ModelEntry } from "@agentfare/models";
-import type { ModelTier } from "@agentfare/models";
+import type { ModelRegistry, ModelEntry, ModelTier } from "@agentfare/models";
 import type { AgentFareConfig, CrossProviderMode, EnterpriseProviderConfig } from "../config/types.js";
 import type { StepAnalysis } from "../analyzer/types.js";
 import { findSameProviderModel } from "./same-provider.js";

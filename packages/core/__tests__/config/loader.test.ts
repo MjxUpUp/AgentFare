@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { mergeConfig, loadConfigFromDisk } from "../../src/config/loader.js";
+import { setLogger } from "../../src/utils/logger.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 
 describe("mergeConfig", () => {
@@ -90,5 +91,40 @@ describe("loadConfigFromDisk error handling", () => {
 
     const result = loadConfigFromDisk(tmpDir);
     expect(result.routing.defaultStrategy).toBe("quality-first");
+  });
+
+  it("loads partial config that omits required sections (isPartial skips presence)", () => {
+    const configPath = path.join(tmpDir, "agentfare.config.json");
+    // only routing provided; models/providers absent — partial must not require them
+    fs.writeFileSync(configPath, JSON.stringify({
+      routing: { defaultStrategy: "quality-first" },
+    }));
+
+    const result = loadConfigFromDisk(tmpDir);
+    expect(result.routing.defaultStrategy).toBe("quality-first");
+    // absent sections backfilled (mergeConfig bases on DEFAULT_CONFIG), not undefined.
+    // Not asserting exact equality: the test process may have a global config
+    // (getConfigPath) that merges providers/models over the default.
+    expect(result.models).toBeDefined();
+    expect(result.providers).toBeDefined();
+  });
+
+  it("warns (not throws) when a partial config has a malformed present field", () => {
+    const warnings: string[] = [];
+    setLogger({ info() {}, warn: (m) => warnings.push(m), error() {} });
+    try {
+      const configPath = path.join(tmpDir, "agentfare.config.json");
+      // defaultStrategy present but invalid value — must be caught & warned,
+      // not silently deep-merged over the default (regression guard for the
+      // isPartial dead-code that previously skipped ALL field validation)
+      fs.writeFileSync(configPath, JSON.stringify({
+        routing: { defaultStrategy: "bogus-strategy" },
+      }));
+
+      expect(() => loadConfigFromDisk(tmpDir)).not.toThrow();
+      expect(warnings.some((w) => w.includes("defaultStrategy"))).toBe(true);
+    } finally {
+      setLogger({ info() {}, warn() {}, error() {} });
+    }
   });
 });

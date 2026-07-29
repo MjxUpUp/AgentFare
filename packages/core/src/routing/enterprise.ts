@@ -10,7 +10,7 @@ export function tryCrossProviderEnterprise(
   const enterpriseConfig = routing.enterpriseProviders[targetProvider];
   if (!enterpriseConfig) return null;
 
-  if (!enterpriseConfig.allowedTiers.includes(tier as "fast" | "standard" | "powerful")) {
+  if (!enterpriseConfig.allowedTiers.includes(tier)) {
     return null;
   }
 

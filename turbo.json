@@ -19,7 +19,7 @@
       "dependsOn": ["build"],
       "inputs": [
         "e2e/**/*.test.ts",
-        "packages/**/*.src/**"
+        "packages/**/src/**"
       ],
       "outputs": []
     },
