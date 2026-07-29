@@ -29,9 +29,13 @@ jobs:
         include:
           - { os: windows-latest, target: x86_64-pc-windows-msvc, label: windows-x64 }
           - { os: macos-14, target: aarch64-apple-darwin, label: macos-arm64 }
-          - { os: macos-13, target: x86_64-apple-darwin, label: macos-x64 }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, label: macos-x64 }
           - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, label: linux-x64 }
     runs-on: ${{ matrix.os }}
+    env:
+      # `secrets` context is forbidden in step `if`. Bridge secret presence into
+      # `env` (allowed in `if`): empty string when no APPLE_CERTIFICATE secret.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,7 +87,7 @@ jobs:
       # 按"有证书"走 security import → codesign 失败。故只在 secret 真实存在时才 export，
       # 否则 tauri 见 env 未定义 → unsigned（符合当前无 Apple 账号的未签名交付决策）。
       - name: Configure Apple signing env
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: ${{ env.HAS_APPLE_CERT != '' }}
         run: |
           echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}" >> "$GITHUB_ENV"
           echo "APPLE_CERTIFICATE=${{ secrets.APPLE_CERTIFICATE }}" >> "$GITHUB_ENV"
