@@ -44,13 +44,14 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          # Match local dev (node 24). The earlier TS1470 on this job was NOT
-          # a node-major tsc issue: packages/core/package.json lacked
-          # "type":"module" in CI because the local ESM change was masked by
-          # git assume-unchanged and never committed, so tsc judged
-          # database.ts as CommonJS. With type:module committed, node 24 just
-          # keeps CI aligned with local dev.
-          node-version: 24
+          # node 22 (LTS), matching release.yml. NOT 24: better-sqlite3@11 has
+          # no prebuilt for node 24's ABI, so install falls back to node-gyp
+          # source build — and node-gyp's VS detection crashes on node 24
+          # (ERR_CHILD_PROCESS_STDIO_MAXBUFFER) on windows-latest. node 22 ships
+          # a prebuilt .node, skipping the compile. (TS1470 was unrelated to
+          # node major — fixed by committing core/package.json type:module,
+          # formerly masked by git assume-unchanged.)
+          node-version: 22
           cache: pnpm
 
       - name: Install dependencies
@@ -76,15 +77,22 @@ jobs:
 
       # beforeBuildCommand 已链式完成：turbo build → bundle:daemon → assemble-sidecar。
       # assemble-sidecar 取本机 node + 本机编译的 better-sqlite3.node，故每平台 native。
-      # Apple 签名/公证：Tauri2 在构建时读取下列 env，存在则签名+公证，缺省则 unsigned。
+      #
+      # Apple 签名/公证：tauri2 构建时读 APPLE_* env，且这些 env 必须完全 *不设置*（不仅是
+      # 空值）才跳过签名。仓库无 APPLE_* secret 时 ${{ secrets.X }} 解析为空字符串，tauri 仍
+      # 按"有证书"走 security import → codesign 失败。故只在 secret 真实存在时才 export，
+      # 否则 tauri 见 env 未定义 → unsigned（符合当前无 Apple 账号的未签名交付决策）。
+      - name: Configure Apple signing env
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        run: |
+          echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}" >> "$GITHUB_ENV"
+          echo "APPLE_CERTIFICATE=${{ secrets.APPLE_CERTIFICATE }}" >> "$GITHUB_ENV"
+          echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> "$GITHUB_ENV"
+          echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> "$GITHUB_ENV"
+
       - name: Build desktop app
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm --filter @agentfare/gui exec tauri build --target ${{ matrix.target }}
 
       - name: Upload artifacts
