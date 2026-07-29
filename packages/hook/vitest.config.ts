@@ -8,7 +8,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@agentfare/mcp-server": path.resolve(__dirname, "src"),
+      "@agentfare/hook": path.resolve(__dirname, "src"),
       "@agentfare/core": path.resolve(__dirname, "../core/src"),
     },
   },

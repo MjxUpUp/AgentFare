@@ -3,14 +3,27 @@
   "version": "0.2.1",
   "description": "Command-line interface for AgentFare cost optimization",
   "license": "MIT",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "agentfare": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./commands": {
+      "types": "./dist/commands/index.d.ts",
+      "import": "./dist/commands/index.js",
+      "default": "./dist/commands/index.js"
+    }
+  },
   "files": [
     "dist"
   ],
-  "bin": {
-    "agentfare": "dist/index.js"
-  },
   "publishConfig": {
     "access": "public"
   },

@@ -3,8 +3,9 @@
   "version": "0.2.1",
   "description": "Fetch interception hooks with protocol conversion for AgentFare",
   "license": "MIT",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],
@@ -17,20 +18,76 @@
     "directory": "packages/hook"
   },
   "exports": {
-    ".": "./dist/index.js",
-    "./fetch-patch": "./dist/fetch-patch.js",
-    "./pipeline": "./dist/pipeline.js",
-    "./request-handler": "./dist/request-handler.js",
-    "./response-handler": "./dist/response-handler.js",
-    "./headers": "./dist/headers.js",
-    "./reentry-guard": "./dist/reentry-guard.js",
-    "./failover": "./dist/failover.js",
-    "./protocol/openai-to-anthropic": "./dist/protocol/openai-to-anthropic.js",
-    "./protocol/anthropic-to-openai-request": "./dist/protocol/anthropic-to-openai-request.js",
-    "./protocol/anthropic-to-openai": "./dist/protocol/anthropic-to-openai.js",
-    "./protocol/openai-to-anthropic-response": "./dist/protocol/openai-to-anthropic-response.js",
-    "./protocol/openai-to-anthropic-sse": "./dist/protocol/openai-to-anthropic-sse.js",
-    "./protocol/sse-transform": "./dist/protocol/sse-transform.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./fetch-patch": {
+      "types": "./dist/fetch-patch.d.ts",
+      "import": "./dist/fetch-patch.js",
+      "default": "./dist/fetch-patch.js"
+    },
+    "./pipeline": {
+      "types": "./dist/pipeline.d.ts",
+      "import": "./dist/pipeline.js",
+      "default": "./dist/pipeline.js"
+    },
+    "./request-handler": {
+      "types": "./dist/request-handler.d.ts",
+      "import": "./dist/request-handler.js",
+      "default": "./dist/request-handler.js"
+    },
+    "./response-handler": {
+      "types": "./dist/response-handler.d.ts",
+      "import": "./dist/response-handler.js",
+      "default": "./dist/response-handler.js"
+    },
+    "./headers": {
+      "types": "./dist/headers.d.ts",
+      "import": "./dist/headers.js",
+      "default": "./dist/headers.js"
+    },
+    "./reentry-guard": {
+      "types": "./dist/reentry-guard.d.ts",
+      "import": "./dist/reentry-guard.js",
+      "default": "./dist/reentry-guard.js"
+    },
+    "./failover": {
+      "types": "./dist/failover.d.ts",
+      "import": "./dist/failover.js",
+      "default": "./dist/failover.js"
+    },
+    "./protocol/openai-to-anthropic": {
+      "types": "./dist/protocol/openai-to-anthropic.d.ts",
+      "import": "./dist/protocol/openai-to-anthropic.js",
+      "default": "./dist/protocol/openai-to-anthropic.js"
+    },
+    "./protocol/anthropic-to-openai-request": {
+      "types": "./dist/protocol/anthropic-to-openai-request.d.ts",
+      "import": "./dist/protocol/anthropic-to-openai-request.js",
+      "default": "./dist/protocol/anthropic-to-openai-request.js"
+    },
+    "./protocol/anthropic-to-openai": {
+      "types": "./dist/protocol/anthropic-to-openai.d.ts",
+      "import": "./dist/protocol/anthropic-to-openai.js",
+      "default": "./dist/protocol/anthropic-to-openai.js"
+    },
+    "./protocol/openai-to-anthropic-response": {
+      "types": "./dist/protocol/openai-to-anthropic-response.d.ts",
+      "import": "./dist/protocol/openai-to-anthropic-response.js",
+      "default": "./dist/protocol/openai-to-anthropic-response.js"
+    },
+    "./protocol/openai-to-anthropic-sse": {
+      "types": "./dist/protocol/openai-to-anthropic-sse.d.ts",
+      "import": "./dist/protocol/openai-to-anthropic-sse.js",
+      "default": "./dist/protocol/openai-to-anthropic-sse.js"
+    },
+    "./protocol/sse-transform": {
+      "types": "./dist/protocol/sse-transform.d.ts",
+      "import": "./dist/protocol/sse-transform.js",
+      "default": "./dist/protocol/sse-transform.js"
+    }
   },
   "scripts": {
     "build": "tsc",

@@ -3,8 +3,36 @@
   "version": "0.2.1",
   "description": "Auto-detection and setup tooling for AgentFare",
   "license": "MIT",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./detector": {
+      "types": "./dist/detector.d.ts",
+      "import": "./dist/detector.js",
+      "default": "./dist/detector.js"
+    },
+    "./shell-writer": {
+      "types": "./dist/shell-writer.d.ts",
+      "import": "./dist/shell-writer.js",
+      "default": "./dist/shell-writer.js"
+    },
+    "./validator": {
+      "types": "./dist/validator.d.ts",
+      "import": "./dist/validator.js",
+      "default": "./dist/validator.js"
+    },
+    "./reporter": {
+      "types": "./dist/reporter.d.ts",
+      "import": "./dist/reporter.js",
+      "default": "./dist/reporter.js"
+    }
+  },
   "files": [
     "dist"
   ],

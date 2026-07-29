@@ -1,4 +1,5 @@
 import type { ModelRegistry, ModelEntry } from "@agentfare/models";
+import type { ModelTier } from "@agentfare/models";
 import type { AgentFareConfig, CrossProviderMode, EnterpriseProviderConfig } from "../config/types.js";
 import type { StepAnalysis } from "../analyzer/types.js";
 import { findSameProviderModel } from "./same-provider.js";
@@ -176,10 +177,10 @@ export class Router {
 
   private tryCrossProviderForProvider(provider: string, tier: string): { model: ModelEntry; apiKey?: string; enterpriseConfig?: EnterpriseProviderConfig } | null {
     if (this.config.routing.crossProvider === "opt-in") {
-      return tryCrossProviderOptIn(this.registry, provider, tier as any, this.config.routing);
+      return tryCrossProviderOptIn(this.registry, provider, tier as ModelTier, this.config.routing);
     }
     if (this.config.routing.crossProvider === "enterprise") {
-      const result = tryCrossProviderEnterprise(this.registry, provider, tier as any, this.config.routing);
+      const result = tryCrossProviderEnterprise(this.registry, provider, tier as ModelTier, this.config.routing);
       return result ? { model: result.model, enterpriseConfig: result.config } : null;
     }
     return null;

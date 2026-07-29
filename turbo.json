@@ -3,11 +3,13 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**"],
+      "cache": true
     },
     "test": {
-      "dependsOn": ["build"],
-      "outputs": []
+      "dependsOn": [],
+      "outputs": [],
+      "cache": false
     },
     "test:watch": {
       "cache": false,
@@ -15,8 +17,15 @@
     },
     "e2e": {
       "dependsOn": ["build"],
-      "inputs": ["e2e/**/*.test.ts"],
+      "inputs": [
+        "e2e/**/*.test.ts",
+        "packages/**/*.src/**"
+      ],
       "outputs": []
+    },
+    "lint": {
+      "cache": false,
+      "persistent": false
     }
   }
 }

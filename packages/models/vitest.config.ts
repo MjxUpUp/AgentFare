@@ -8,8 +8,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@agentfare/mcp-server": path.resolve(__dirname, "src"),
-      "@agentfare/core": path.resolve(__dirname, "../core/src"),
+      "@agentfare/models": path.resolve(__dirname, "src"),
+      "@agentfare/models/paths": path.resolve(__dirname, "src/paths.ts"),
     },
   },
 });

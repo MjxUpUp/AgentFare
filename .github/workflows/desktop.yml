@@ -44,12 +44,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          # node 24, not 22: tsc's Node16 module-resolution realpath behaviour
-          # under pnpm's junction layout differs across node majors, and on
-          # node 22 it mis-judged packages/core/src/tracker/database.ts as CJS
-          # (TS2441/TS1470) even though core is type:module — breaking
-          # beforeBuildCommand's `pnpm -w build`. Local dev is on node 24 and
-          # never reproduced it; pin CI to the same.
+          # Match local dev (node 24). The earlier TS1470 on this job was NOT
+          # a node-major tsc issue: packages/core/package.json lacked
+          # "type":"module" in CI because the local ESM change was masked by
+          # git assume-unchanged and never committed, so tsc judged
+          # database.ts as CommonJS. With type:module committed, node 24 just
+          # keeps CI aligned with local dev.
           node-version: 24
           cache: pnpm
 
@@ -73,21 +73,6 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf
-
-      # TEMP DEBUG: CI tsc judges database.ts as CJS (TS1470) though core is
-      # type:module and local node 24 never reproduces. Print the resolved
-      # tsconfig + package.json + versions on one platform to find the real
-      # module-resolution difference. Remove once root-caught.
-      - name: Debug core tsc module resolution
-        if: matrix.label == 'linux-x64'
-        run: |
-          echo "=== core/package.json ==="
-          cat packages/core/package.json
-          echo "=== tsc --showConfig (merged tsconfig) ==="
-          pnpm --filter @agentfare/core exec tsc --showConfig
-          echo "=== node + tsc versions ==="
-          node --version
-          pnpm --filter @agentfare/core exec tsc --version
 
       # beforeBuildCommand 已链式完成：turbo build → bundle:daemon → assemble-sidecar。
       # assemble-sidecar 取本机 node + 本机编译的 better-sqlite3.node，故每平台 native。

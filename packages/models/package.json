@@ -3,18 +3,9 @@
   "version": "0.2.1",
   "description": "Model registry and pricing data for AgentFare",
   "license": "MIT",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./paths": {
-      "types": "./dist/paths.d.ts",
-      "default": "./dist/paths.js"
-    }
-  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],
@@ -25,6 +16,18 @@
     "type": "git",
     "url": "https://github.com/MjxUpUp/AgentFare.git",
     "directory": "packages/models"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./paths": {
+      "types": "./dist/paths.d.ts",
+      "import": "./dist/paths.js",
+      "default": "./dist/paths.js"
+    }
   },
   "scripts": {
     "build": "tsc",
