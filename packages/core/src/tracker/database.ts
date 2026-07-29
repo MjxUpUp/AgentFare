@@ -3,15 +3,25 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 
 // core is an ESM package (type: module), where the global `require` is not
-// defined. better-sqlite3 is a CJS native module, so load it through an
-// explicit require rooted at this module's real URL — this both makes require
-// available in ESM and resolves better-sqlite3 from this file's true location
-// (side-stepping Windows junction/realpath issues under pnpm).
-const require = createRequire(import.meta.url);
+// defined. better-sqlite3 is a CJS native module, so load it through a require
+// function rooted at this module's real URL — this makes require available in
+// ESM and resolves better-sqlite3 from this file's true location (side-stepping
+// Windows junction/realpath issues under pnpm).
+//
+// Named `localRequire`, NOT `require`: under Node16/NodeNext module resolution
+// the compiler reserves `require` as a top-level name in any file it judges
+// CommonJS, so `const require = ...` trips TS2441 there. core is type:module so
+// the local build judges this ESM and never flagged it, but CI's compiler run
+// (node 22 + tsc 5.9.3, different realpath behaviour under pnpm) judged this
+// file CJS and failed (TS2441 + TS1470). A non-reserved name compiles under
+// either judgement, so this file no longer depends on the module-kind call
+// being correct. (import.meta below is still ESM-only — see desktop.yml
+// node-version: CI node matched to local to keep the ESM judgement stable.)
+const localRequire = createRequire(import.meta.url);
 
 let Database: typeof import("better-sqlite3") | undefined;
 try {
-  Database = require("better-sqlite3");
+  Database = localRequire("better-sqlite3");
 } catch (e) {
   // Optional native dep, but surface the REAL failure reason to stderr.
   // MODULE_NOT_FOUND ("not installed") is the benign case, but this same catch

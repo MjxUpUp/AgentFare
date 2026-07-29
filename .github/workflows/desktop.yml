@@ -44,7 +44,13 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # node 24, not 22: tsc's Node16 module-resolution realpath behaviour
+          # under pnpm's junction layout differs across node majors, and on
+          # node 22 it mis-judged packages/core/src/tracker/database.ts as CJS
+          # (TS2441/TS1470) even though core is type:module — breaking
+          # beforeBuildCommand's `pnpm -w build`. Local dev is on node 24 and
+          # never reproduced it; pin CI to the same.
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
