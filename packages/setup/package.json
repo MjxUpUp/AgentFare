@@ -6,6 +6,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "agentfare-setup": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -46,11 +49,16 @@
   },
   "scripts": {
     "build": "tsc",
+    "bundle:cli": "node scripts/bundle-cli.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "@agentfare/models": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "esbuild": "^0.21.5",
     "typescript": "^5.8",
     "vitest": "^3.2"
   }

@@ -156,10 +156,115 @@ fn daemon_health_ok(port: u16) -> bool {
   String::from_utf8_lossy(&buf).contains("agentfare-proxy")
 }
 
+/// Resolve the setup CLI script — the GUI-side entry that performs shell
+/// takeover/restore (see packages/setup/src/cli.ts). Dev: the workspace's
+/// compiled `setup/dist/cli.js`. Release: the esbuild-bundled `setup-cli.mjs`
+/// shipped as a resource in `sidecar/`. Override with `AGENTFARE_SETUP_CLI_JS`.
+fn setup_cli_entry(handle: &tauri::AppHandle) -> String {
+  if let Ok(p) = std::env::var("AGENTFARE_SETUP_CLI_JS") {
+    return p;
+  }
+  let dev_entry = || {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("..")
+      .join("..")
+      .join("packages")
+      .join("setup")
+      .join("dist")
+      .join("cli.js")
+      .to_string_lossy()
+      .into_owned()
+  };
+  if cfg!(debug_assertions) {
+    return dev_entry();
+  }
+  match handle
+    .path()
+    .resource_dir()
+    .map(|d| d.join("sidecar").join("setup-cli.mjs").to_string_lossy().into_owned())
+  {
+    Ok(p) => p,
+    Err(_) => dev_entry(),
+  }
+}
+
+/// Spawn the setup CLI with the given subcommand args and return its single-line
+/// JSON result. The CLI prints `{ok:true,...}` or `{ok:false,error}` on stdout
+/// for BOTH success AND its own error paths (with exit 1 on error) — we ignore
+/// the exit code and parse stdout, so the user-facing error ("未检测到任何 CLI
+/// 工具") reaches the frontend verbatim instead of being masked as a generic
+/// spawn failure. Only a true spawn failure or non-JSON output becomes an Err.
+fn run_setup_cli(handle: &tauri::AppHandle, args: &[&str]) -> Result<serde_json::Value, String> {
+  spawn_setup_cli(&node_binary(handle), &setup_cli_entry(handle), args)
+}
+
+/// Spawn `node <cli_entry> <args>` and return the CLI's single-line JSON result.
+/// Pure (no Tauri dependency): the node binary path and CLI entry are passed in
+/// so integration tests can drive a REAL node + REAL cli.js (not a mock) — this
+/// is the seam that makes the Rust↔setup-cli link automatable without a Tauri
+/// runtime. See tests/setup_cli_integration.rs.
+///
+/// The CLI prints `{ok:true,...}` or `{ok:false,error}` on stdout for BOTH
+/// success AND its own error paths (exit 1 on error) — we ignore the exit code
+/// and parse stdout, so the user-facing error ("未检测到任何 CLI 工具") reaches
+/// the frontend verbatim instead of being masked as a generic spawn failure.
+/// Only a true spawn failure or non-JSON output becomes an Err.
+pub fn spawn_setup_cli(
+  node: &str,
+  cli_entry: &str,
+  args: &[&str],
+) -> Result<serde_json::Value, String> {
+  let mut cmd = Command::new(node);
+  cmd.arg(cli_entry).args(args);
+  // Capture stdout (the JSON line). Pipe stderr too and log it: the CLI writes
+  // its diagnostics into the JSON object, but node/parse warnings still land on
+  // stderr and must be reachable in release (window-less app has no console).
+  cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+  let output = cmd
+    .output()
+    .map_err(|e| format!("spawn setup-cli failed: {e}"))?;
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  if !stderr.trim().is_empty() {
+    log::warn!("setup-cli stderr: {}", stderr.trim());
+  }
+  serde_json::from_str::<serde_json::Value>(stdout.trim()).map_err(|e| {
+    format!("setup-cli returned non-JSON output: {stdout:?} (parse error: {e})")
+  })
+}
+
+/// Take over the user's shell: detect CLI tools, persist their current upstream
+/// URLs, then rewrite *_BASE_URL to point at the proxy. `port` defaults to the
+/// daemon port. Returns the CLI's JSON result (ok + rcPath/platform/tools/...).
+#[tauri::command]
+fn takeover_shell(handle: tauri::AppHandle, port: Option<u16>) -> Result<serde_json::Value, String> {
+  let port_str = port.unwrap_or(DAEMON_PORT).to_string();
+  run_setup_cli(&handle, &["takeover", "--port", &port_str])
+}
+
+/// Reverse the shell takeover: strip agentfare markers and restore the original
+/// *_BASE_URL exports (read from the SSOT config.json the takeover wrote).
+#[tauri::command]
+fn restore_shell(handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+  run_setup_cli(&handle, &["restore"])
+}
+
+/// Read-only probe: detect CLI tools + capture current *_BASE_URL so the GUI can
+/// preview the takeover before the user confirms it.
+#[tauri::command]
+fn detect_shell_tools(handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+  run_setup_cli(&handle, &["capture"])
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let app = tauri::Builder::default()
     .manage(DaemonChild(Mutex::new(None)))
+    .invoke_handler(tauri::generate_handler![
+      takeover_shell,
+      restore_shell,
+      detect_shell_tools,
+    ])
     .setup(|app| {
       // Logger in both dev (Info) and release (Warn): a release user whose
       // daemon fails to spawn must still be able to find out why from the log

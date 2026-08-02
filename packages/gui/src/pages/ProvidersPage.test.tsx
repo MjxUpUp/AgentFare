@@ -16,6 +16,7 @@ vi.mock("../api", () => ({
     models: vi.fn(),
     active: vi.fn(),
     setActive: vi.fn(),
+    setKeys: vi.fn(),
   },
 }));
 
@@ -35,6 +36,8 @@ beforeEach(() => {
   vi.mocked(adminApi.setActive).mockResolvedValue({
     ok: true, lockMode: "model", activeModel: "deepseek/v4-pro", activeProvider: null,
   });
+  // 默认 setKeys 成功（key 管理成功路径测试用）
+  vi.mocked(adminApi.setKeys).mockResolvedValue({ ok: true, providers: ["deepseek"] });
 });
 
 describe("ProvidersPage — cc-switch 实时锁定 UI", () => {
@@ -96,5 +99,48 @@ describe("ProvidersPage — cc-switch 实时锁定 UI", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /锁定该模型/ })).not.toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: /锁定该模型/ }));
     await waitFor(() => expect(screen.getByText(/401 invalid_admin_token/)).toBeInTheDocument());
+  });
+});
+
+describe("ProvidersPage — API 密钥管理（slice③）", () => {
+  it("保存密钥时以 {provider: key} 调 adminApi.setKeys 并回显成功", async () => {
+    render(<ProvidersPage />);
+    // 等 models 加载（provider 下拉依赖 grouped）
+    await waitFor(() => expect(screen.getByRole("group", { name: "deepseek" })).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "deepseek" } });
+    fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "sk-test-123" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存密钥/ }));
+
+    await waitFor(() =>
+      expect(adminApi.setKeys).toHaveBeenCalledWith({ deepseek: "sk-test-123" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/已保存 deepseek 密钥/)).toBeInTheDocument(),
+    );
+  });
+
+  it("setKeys 失败时在 banner 回显 daemon 错误", async () => {
+    vi.mocked(adminApi.setKeys).mockRejectedValueOnce(new Error("403 forbidden_origin"));
+    render(<ProvidersPage />);
+    await waitFor(() => expect(screen.getByRole("group", { name: "deepseek" })).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "deepseek" } });
+    fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "sk-x" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存密钥/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/403 forbidden_origin/)).toBeInTheDocument(),
+    );
+  });
+
+  it("provider 或 key 为空时保存按钮禁用", async () => {
+    render(<ProvidersPage />);
+    await waitFor(() => expect(screen.getByRole("group", { name: "deepseek" })).toBeInTheDocument());
+    const saveBtn = screen.getByRole("button", { name: /保存密钥/ });
+    expect(saveBtn).toBeDisabled();
+    // 选了 provider 但没填 key —— 仍禁用
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "deepseek" } });
+    expect(saveBtn).toBeDisabled();
   });
 });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { adminApi, type ProviderInfo, type ModelInfo, type ActiveLock } from "../api";
+import { ShellSettings } from "./ShellSettings";
 
 type Notice = { kind: "ok" | "err"; text: string };
 
@@ -29,6 +30,11 @@ export function ProvidersPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  // API 密钥管理（slice③）—— key 不回显，每次填写即覆盖，故只存当前输入
+  const [keyProvider, setKeyProvider] = useState("");
+  const [keyValue, setKeyValue] = useState("");
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyNotice, setKeyNotice] = useState<Notice | null>(null);
 
   // 三路独立请求：providers/models/active 任一失败不连累其余（与 ModelsPage
   // 同模式）。active() 在旧版 daemon（无 cc-switch 端点）上会 404，徽章退回
@@ -105,6 +111,26 @@ export function ProvidersPage() {
     }
   }, []);
 
+  // POST /api/keys —— 单 provider 单 key 写入。daemon 持久化 + 热加载，回显
+  // providers 名（不回显 key 值）。后续扩展多 provider 批量写时改成遍历 entries。
+  const saveKey = useCallback(async () => {
+    if (!keyProvider || !keyValue) return;
+    setKeyBusy(true);
+    setKeyNotice(null);
+    try {
+      const r = await adminApi.setKeys({ [keyProvider]: keyValue });
+      setKeyNotice({
+        kind: "ok",
+        text: `已保存 ${keyProvider} 密钥（${r.providers.join(", ")}），热加载后下一请求即生效`,
+      });
+      setKeyValue("");
+    } catch (e) {
+      setKeyNotice({ kind: "err", text: errMsg(e) });
+    } finally {
+      setKeyBusy(false);
+    }
+  }, [keyProvider, keyValue]);
+
   const entries = providers ? Object.entries(providers) : [];
   const state = lockState(active);
   const locked = active != null && active.lockMode !== "auto";
@@ -120,7 +146,7 @@ export function ProvidersPage() {
 
       <div className="banner info">
         实时切换：下方一键锁定目标模型，下一个请求即按新锁定路由，无需重启 daemon
-        （类似 cc-switch）。端点 / 密钥的增删改仍通过 <code>agentfare config</code>。
+        （类似 cc-switch）。也可直接在下方管理 API 密钥与接管 shell。
       </div>
 
       {error && <div className="banner error">{error}</div>}
@@ -209,6 +235,60 @@ export function ProvidersPage() {
           <p className="muted">未加载任何 provider。</p>
         )}
       </section>
+
+      {/* ── API 密钥（slice③：调 adminApi.setKeys） ── */}
+      <section className="card">
+        <h3>API 密钥</h3>
+        <p className="muted small">
+          密钥经 daemon 的 loopback 写端点持久化到 <code>keys.json</code>，热加载后下一请求即按新密钥转发。
+          为安全起见，已保存的密钥不回显——重复填写即覆盖。
+        </p>
+        <div className="key-row">
+          <label className="field">
+            <span>Provider</span>
+            <select
+              aria-label="Provider"
+              value={keyProvider}
+              onChange={(e) => setKeyProvider(e.target.value)}
+              disabled={keyBusy}
+            >
+              <option value="">（选择 provider）</option>
+              {grouped.map(([p]) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>API Key</span>
+            <input
+              aria-label="API Key"
+              type="password"
+              value={keyValue}
+              onChange={(e) => setKeyValue(e.target.value)}
+              placeholder="sk-…"
+              autoComplete="off"
+              disabled={keyBusy}
+            />
+          </label>
+          <button
+            className="toggle"
+            disabled={keyBusy || !keyProvider || !keyValue}
+            onClick={saveKey}
+          >
+            保存密钥
+          </button>
+        </div>
+        {keyNotice && (
+          <div className={"banner " + (keyNotice.kind === "ok" ? "info" : "error")}>
+            {keyNotice.text}
+          </div>
+        )}
+      </section>
+
+      {/* ── Shell 接管（slice③：调 ipc.ts） ── */}
+      <ShellSettings />
     </div>
   );
 }

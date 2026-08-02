@@ -23,6 +23,9 @@ import { startProxy, readProxyState } from "./lifecycle.js";
 import { buildProviderMap } from "./provider-map.js";
 import type { ActiveLock } from "./admin.js";
 import { buildLockedConfigJson } from "./lock-config.js";
+import { buildProvidersConfigJson } from "./config-patch.js";
+import { saveKeys as persistKeys } from "./credential-store.js";
+import type { ProviderConfig } from "@agentfare/core";
 
 // Daemon owns the process — enable stderr logging (stdout may be piped to log file)
 setLogger({
@@ -83,6 +86,35 @@ async function main(): Promise<void> {
         if (!built.ok) return { ok: false, error: built.error };
         fs.mkdirSync(path.dirname(configPath), { recursive: true });
         // M4: 写前备份上一个 config，坏写可回滚；仅在覆盖既有文件时。
+        if (existing !== null) {
+          fs.copyFileSync(configPath, configPath + ".bak");
+        }
+        atomicWriteFileSync(configPath, built.content);
+        reloadConfig();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    // POST /api/keys（A2）：credential-store.saveKeys 合并写 keys.json + 权限加固
+    // + 失效缓存。key-store.resolveApiKey 三层读含 loadKeysFromDisk（mtime 缓存），
+    // 失效后下一请求即读新 key，无需 reloadConfig。alias persistKeys 避免与本
+    // 属性名同名混淆。
+    saveKeys: (updates: Record<string, string>): void => {
+      persistKeys(updates);
+    },
+    // POST /api/providers（A3）：buildProvidersConfigJson patch providers 段（保留
+    // 其余字段，corrupt 拒写）→ .bak 备份 → 原子写 → reloadConfig 重建 providerMap。
+    // 与 applyLock 同结构（M4 备份 + sync-only 原子交换不变式）。
+    applyProviders: (
+      update: Record<string, ProviderConfig>,
+    ): { ok: true } | { ok: false; error: string } => {
+      try {
+        const configPath = getConfigPath();
+        const existing = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : null;
+        const built = buildProvidersConfigJson(existing, update);
+        if (!built.ok) return { ok: false, error: built.error };
+        fs.mkdirSync(path.dirname(configPath), { recursive: true });
         if (existing !== null) {
           fs.copyFileSync(configPath, configPath + ".bak");
         }

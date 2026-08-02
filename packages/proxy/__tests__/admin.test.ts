@@ -418,6 +418,138 @@ describe("handleAdminRequest — active lock + admin token (cc-switch)", () => {
   });
 });
 
+// GUI 一等公民 A2/A3：keys/providers 写端点。与 POST /api/active 同模式（origin
+// 门控 → token → handler → 校验 → apply），让纯 GUI 用户无需 CLI 即可填 key、
+// 配 provider（含中转站 baseUrl）。错误响应不回显用户输入（admin.ts 契约）。
+describe("handleAdminRequest — keys/providers write endpoints (GUI 一等公民 A2/A3)", () => {
+  const registry = new ModelRegistry();
+  const baseDeps: AdminDeps = {
+    registry,
+    providerMap: {},
+    adminToken: "secret-token-xyz",
+  };
+  const tok = { "x-agentfare-admin-token": "secret-token-xyz" };
+
+  // ── POST /api/keys ──
+  it("POST /api/keys evil origin → 403 (origin gate before token)", () => {
+    const r = adminPost("/api/keys", { ...baseDeps, saveKeys: () => {} }, { openai: "sk-x" }, { origin: "https://evil.com", ...tok });
+    expect(r?.status).toBe(403);
+    expect(r?.body).toEqual({ error: "forbidden_origin" });
+  });
+
+  it("POST /api/keys no adminToken → 501 admin_disabled", () => {
+    const r = adminPost("/api/keys", { ...baseDeps, adminToken: undefined }, { openai: "sk-x" }, tok);
+    expect(r?.status).toBe(501);
+    expect(r?.body).toEqual({ error: "admin_disabled" });
+  });
+
+  it("POST /api/keys wrong token → 401 invalid_admin_token", () => {
+    const r = adminPost("/api/keys", { ...baseDeps, saveKeys: () => {} }, { openai: "sk-x" }, { "x-agentfare-admin-token": "wrong" });
+    expect(r?.status).toBe(401);
+    expect(r?.body).toEqual({ error: "invalid_admin_token" });
+  });
+
+  it("POST /api/keys saveKeys missing → 503 key_store_unavailable", () => {
+    const r = adminPost("/api/keys", baseDeps, { openai: "sk-x" }, tok);
+    expect(r?.status).toBe(503);
+    expect(r?.body).toEqual({ error: "key_store_unavailable" });
+  });
+
+  it("POST /api/keys array body → 400 invalid_keys_shape", () => {
+    const r = adminPost("/api/keys", { ...baseDeps, saveKeys: () => {} }, ["sk-x"], tok);
+    expect(r?.status).toBe(400);
+    expect(r?.body).toEqual({ error: "invalid_keys_shape" });
+  });
+
+  it("POST /api/keys empty value → 400 invalid_key_entry", () => {
+    const r = adminPost("/api/keys", { ...baseDeps, saveKeys: () => {} }, { openai: "" }, tok);
+    expect(r?.status).toBe(400);
+    expect(r?.body).toEqual({ error: "invalid_key_entry" });
+  });
+
+  it("POST /api/keys empty object → 400 no_keys_provided", () => {
+    const r = adminPost("/api/keys", { ...baseDeps, saveKeys: () => {} }, {}, tok);
+    expect(r?.status).toBe(400);
+    expect(r?.body).toEqual({ error: "no_keys_provided" });
+  });
+
+  it("POST /api/keys valid → 200, calls saveKeys, echoes provider names only (no key value)", () => {
+    const saved: Record<string, string>[] = [];
+    const r = adminPost(
+      "/api/keys",
+      { ...baseDeps, saveKeys: (u) => { saved.push(u); } },
+      { openai: "sk-x", deepseek: "sk-y" },
+      tok,
+    );
+    expect(r?.status).toBe(200);
+    expect(r?.body).toEqual({ ok: true, providers: ["openai", "deepseek"] });
+    expect(saved).toEqual([{ openai: "sk-x", deepseek: "sk-y" }]);
+    // 响应绝不回显 key 值（admin.ts 契约：不泄露凭据）
+    expect(JSON.stringify(r?.body)).not.toContain("sk-x");
+  });
+
+  // ── POST /api/providers ──
+  it("POST /api/providers evil origin → 403", () => {
+    const r = adminPost("/api/providers", { ...baseDeps, applyProviders: () => ({ ok: true }) }, { openai: { baseUrl: "https://relay.example.com" } }, { origin: "https://evil.com", ...tok });
+    expect(r?.status).toBe(403);
+  });
+
+  it("POST /api/providers applyProviders missing → 503 reload_unavailable", () => {
+    const r = adminPost("/api/providers", baseDeps, { openai: { baseUrl: "https://relay.example.com" } }, tok);
+    expect(r?.status).toBe(503);
+    expect(r?.body).toEqual({ error: "reload_unavailable" });
+  });
+
+  it("POST /api/providers missing baseUrl → 400 base_url_required", () => {
+    const r = adminPost("/api/providers", { ...baseDeps, applyProviders: () => ({ ok: true }) }, { openai: {} }, tok);
+    expect(r?.status).toBe(400);
+    expect(r?.body).toEqual({ error: "base_url_required" });
+  });
+
+  it("POST /api/providers non-http baseUrl → 400 invalid_base_url", () => {
+    // baseUrl URL 形态校验（防 GUI 用户拼错 / file:// 等静默落盘触发隐蔽路由失败）
+    const r = adminPost("/api/providers", { ...baseDeps, applyProviders: () => ({ ok: true }) }, { openai: { baseUrl: "file:///etc/passwd" } }, tok);
+    expect(r?.status).toBe(400);
+    expect(r?.body).toEqual({ error: "invalid_base_url" });
+  });
+
+  it("POST /api/providers malformed baseUrl → 400 invalid_base_url", () => {
+    const r = adminPost("/api/providers", { ...baseDeps, applyProviders: () => ({ ok: true }) }, { openai: { baseUrl: "not-a-url" } }, tok);
+    expect(r?.status).toBe(400);
+    expect(r?.body).toEqual({ error: "invalid_base_url" });
+  });
+
+  it("POST /api/providers invalid upstreamUrl → 400 invalid_upstream_url", () => {
+    const r = adminPost("/api/providers", { ...baseDeps, applyProviders: () => ({ ok: true }) }, { openai: { baseUrl: "https://relay.example.com", upstreamUrl: "javascript:alert(1)" } }, tok);
+    expect(r?.status).toBe(400);
+    expect(r?.body).toEqual({ error: "invalid_upstream_url" });
+  });
+
+  it("POST /api/providers valid → 200, calls applyProviders with normalized config", () => {
+    const applied: Record<string, unknown>[] = [];
+    const r = adminPost(
+      "/api/providers",
+      { ...baseDeps, applyProviders: (u) => { applied.push(u); return { ok: true }; } },
+      { openai: { baseUrl: "https://relay.example.com", upstreamUrl: "https://api.openai.com" } },
+      tok,
+    );
+    expect(r?.status).toBe(200);
+    expect(r?.body).toEqual({ ok: true, providers: ["openai"] });
+    expect(applied).toEqual([{ openai: { baseUrl: "https://relay.example.com", upstreamUrl: "https://api.openai.com" } }]);
+  });
+
+  it("POST /api/providers applyProviders reports failure → 400 with daemon error", () => {
+    const r = adminPost(
+      "/api/providers",
+      { ...baseDeps, applyProviders: () => ({ ok: false, error: "config_corrupt" }) },
+      { openai: { baseUrl: "https://relay.example.com" } },
+      tok,
+    );
+    expect(r?.status).toBe(400);
+    expect(r?.body).toEqual({ error: "config_corrupt" });
+  });
+});
+
 // ── HTTP integration: real server + fetch ────────────────────────────────
 
 describe("admin HTTP endpoints (end-to-end)", () => {
@@ -681,6 +813,109 @@ describe("admin HTTP endpoints (end-to-end)", () => {
       expect(res.status).toBe(413);
     } finally {
       await new Promise<void>((r) => bodyServer.close(() => r()));
+    }
+  });
+
+  // GUI 一等公民 A2/A3 端到端：照 POST /api/active 模式（createProxyServer 真实
+  // http.Server + adminToken + mock 回调），验证 server.ts 写端点完整链路——
+  // readBody → extractNodeHeaders → origin gate → token → handleAdminRequest →
+  // 响应序列化 + CORS 头。回调 mock（saveKeys/applyProviders）够：HTTP 层是
+  // server.ts，纯函数层（buildProvidersConfigJson）由 config-patch.test.ts 守护。
+  it("POST /api/keys persists keys over HTTP (server.ts write path, no key echoed)", async () => {
+    let saved: Record<string, string> | null = null;
+    const keysServer = createProxyServer({
+      port: 0,
+      adminToken: "e2e-token",
+      deps: {
+        registry: deps.registry,
+        providerMap: deps.providerMap,
+        handler: { handle: async () => null },
+        saveKeys: (u: Record<string, string>) => { saved = u; },
+      } as any,
+    });
+    await new Promise<void>((r) => keysServer.listen(0, "127.0.0.1", r));
+    const addr = keysServer.address() as http.AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/keys`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-agentfare-admin-token": "e2e-token" },
+        body: JSON.stringify({ openai: "sk-real-key-123", deepseek: "sk-ds-456" }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ ok: true, providers: ["openai", "deepseek"] });
+      // saveKeys 收到完整 updates（HTTP 层把 body 正确传给回调）
+      expect(saved).toEqual({ openai: "sk-real-key-123", deepseek: "sk-ds-456" });
+      // 响应绝不回显 key 值（凭据不泄露契约，admin.ts 核心安全约束）
+      expect(JSON.stringify(body)).not.toContain("sk-real-key-123");
+      expect(JSON.stringify(body)).not.toContain("sk-ds-456");
+      // 写端点 CORS 头存在（GUI webview 跨 origin 带 token 调用）
+      expect(res.headers.get("access-control-allow-headers")).toContain("x-agentfare-admin-token");
+    } finally {
+      await new Promise<void>((r) => keysServer.close(() => r()));
+    }
+  });
+
+  it("POST /api/keys rejects evil origin with 403 over HTTP (origin gate at server layer)", async () => {
+    const keysServer = createProxyServer({
+      port: 0,
+      adminToken: "e2e-token",
+      deps: {
+        registry: deps.registry,
+        providerMap: deps.providerMap,
+        handler: { handle: async () => null },
+        // 回调绝不该被执行——origin 门控必须在 token/handler 之前
+        saveKeys: () => { throw new Error("saveKeys must not run for evil origin"); },
+      } as any,
+    });
+    await new Promise<void>((r) => keysServer.listen(0, "127.0.0.1", r));
+    const addr = keysServer.address() as http.AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/keys`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-agentfare-admin-token": "e2e-token",
+          origin: "https://evil.example.com",
+        },
+        body: JSON.stringify({ openai: "sk-x" }),
+      });
+      expect(res.status).toBe(403);
+      const body = await res.json();
+      expect(body).toEqual({ error: "forbidden_origin" });
+    } finally {
+      await new Promise<void>((r) => keysServer.close(() => r()));
+    }
+  });
+
+  it("POST /api/providers merges config over HTTP (server.ts write path, normalized)", async () => {
+    let applied: Record<string, unknown> | null = null;
+    const providersServer = createProxyServer({
+      port: 0,
+      adminToken: "e2e-token",
+      deps: {
+        registry: deps.registry,
+        providerMap: deps.providerMap,
+        handler: { handle: async () => null },
+        applyProviders: (u: Record<string, unknown>) => { applied = u; return { ok: true }; },
+      } as any,
+    });
+    await new Promise<void>((r) => providersServer.listen(0, "127.0.0.1", r));
+    const addr = providersServer.address() as http.AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api/providers`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-agentfare-admin-token": "e2e-token" },
+        body: JSON.stringify({ openai: { baseUrl: "https://relay.example.com", upstreamUrl: "https://api.openai.com" } }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ ok: true, providers: ["openai"] });
+      // applyProviders 收到规范化后的 config（baseUrl + upstreamUrl 透传）
+      expect(applied).toEqual({ openai: { baseUrl: "https://relay.example.com", upstreamUrl: "https://api.openai.com" } });
+      expect(res.headers.get("access-control-allow-headers")).toContain("x-agentfare-admin-token");
+    } finally {
+      await new Promise<void>((r) => providersServer.close(() => r()));
     }
   });
 });

@@ -21,7 +21,7 @@
  */
 
 import * as crypto from "node:crypto";
-import type { TrackingDatabase, RoutingConfig } from "@agentfare/core";
+import type { TrackingDatabase, RoutingConfig, ProviderConfig } from "@agentfare/core";
 import type { ModelRegistry } from "@agentfare/models";
 import type { ProviderInfo } from "./provider-map.js";
 
@@ -44,6 +44,20 @@ export interface AdminDeps {
    * RequestHandler/ModelRegistry/providerMap，使下一个请求即按新锁定路由。
    */
   applyLock?: (lock: ActiveLock) => { ok: true } | { ok: false; error: string };
+  /**
+   * 持久化 API key 到 keys.json（POST /api/keys）。daemon 端实现：调
+   * credential-store.saveKeys（合并写 + 权限加固 + 失效缓存），下一个请求
+   * 即按新 key 转发，无需 reload config。
+   */
+  saveKeys?: (updates: Record<string, string>) => void;
+  /**
+   * 合并 provider 配置进 config.json 并热加载（POST /api/providers）。daemon
+   * 端实现：buildProvidersConfigJson patch → 写盘 → reloadConfig 重建
+   * providerMap，下一个请求即按新 provider 配置路由。
+   */
+  applyProviders?: (
+    update: Record<string, ProviderConfig>,
+  ) => { ok: true } | { ok: false; error: string };
   /** admin 写端点鉴权 token；未配置则写端点拒绝（501 admin_disabled）。 */
   adminToken?: string;
 }
@@ -147,13 +161,18 @@ export function handleAdminRequest(
 ): AdminResponse | null {
   if (!pathname.startsWith("/api")) return null;
 
-  // Write endpoint (POST, token-gated). Origin is checked before the token so
+  // Write endpoints (POST, token-gated). Origin is checked before the token so
   // a non-allowlisted web page never learns whether its token guess was right.
-  if (method === "POST" && pathname === "/api/active") {
+  // cc-switch 模式扩展：active/keys/providers 三个写端点共用 origin 门控 +
+  // token 鉴权（GUI 一等公民 A2/A3，让纯 GUI 用户无需 CLI 即可填 key、配
+  // provider）。
+  if (method === "POST") {
     if (!isAllowedAdminOrigin(headers["origin"])) {
       return { status: 403, body: { error: "forbidden_origin" } };
     }
-    return handleSetActive(headers, body, deps);
+    if (pathname === "/api/active") return handleSetActive(headers, body, deps);
+    if (pathname === "/api/keys") return handleSetKeys(headers, body, deps);
+    if (pathname === "/api/providers") return handleSetProviders(headers, body, deps);
   }
 
   // All other admin endpoints are read-only GET
@@ -269,4 +288,121 @@ function handleSetActive(
     status: 200,
     body: { ok: true, lockMode, activeModel: activeModel ?? null, activeProvider: activeProvider ?? null },
   };
+}
+
+/**
+ * POST /api/keys — persist API keys to keys.json（GUI Settings 填 key，A2）。
+ * Token-gated; saveKeys 原子合并 + 权限加固 + 失效缓存，下一个请求即按新
+ * key 转发，无需 reload。响应只回显已写入的 provider 名列表——绝不回显
+ * key 值（admin.ts 契约：不回显用户控制输入，防注入/泄露）。
+ */
+function handleSetKeys(
+  headers: Record<string, string | undefined>,
+  body: string | undefined,
+  deps: AdminDeps,
+): AdminResponse {
+  if (!deps.adminToken) return { status: 501, body: { error: "admin_disabled" } };
+  if (!adminTokenOk(headers["x-agentfare-admin-token"], deps.adminToken)) {
+    return { status: 401, body: { error: "invalid_admin_token" } };
+  }
+  if (!deps.saveKeys) return { status: 503, body: { error: "key_store_unavailable" } };
+
+  let payload: any;
+  try {
+    payload = body ? JSON.parse(body) : {};
+  } catch {
+    return { status: 400, body: { error: "invalid_json" } };
+  }
+
+  // 必须是扁平 Record<string,string>：provider 名 + key 值均非空字符串。
+  // keys.json 是 provider→key 映射，不接受数组/原始值/嵌套对象。
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return { status: 400, body: { error: "invalid_keys_shape" } };
+  }
+  const updates: Record<string, string> = {};
+  for (const [provider, key] of Object.entries(payload)) {
+    if (typeof provider !== "string" || provider === "" || typeof key !== "string" || key === "") {
+      return { status: 400, body: { error: "invalid_key_entry" } };
+    }
+    updates[provider] = key;
+  }
+  if (Object.keys(updates).length === 0) {
+    return { status: 400, body: { error: "no_keys_provided" } };
+  }
+
+  deps.saveKeys(updates);
+  return { status: 200, body: { ok: true, providers: Object.keys(updates) } };
+}
+
+/**
+ * POST /api/providers — merge provider config（baseUrl/upstreamUrl）进
+ * config.json 并热加载（GUI Settings 加/改 provider，如指向中转站，A3）。
+ * Token-gated; applyProviders 经 buildProvidersConfigJson patch（保留其余字段）
+ * → 原子写 → reloadConfig 重建 providerMap。
+ */
+/** 校验 http/https URL 形态——纯 GUI 用户拼错的 baseUrl/upstreamUrl 不应静默落盘触发隐蔽路由失败。 */
+function isValidHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function handleSetProviders(
+  headers: Record<string, string | undefined>,
+  body: string | undefined,
+  deps: AdminDeps,
+): AdminResponse {
+  if (!deps.adminToken) return { status: 501, body: { error: "admin_disabled" } };
+  if (!adminTokenOk(headers["x-agentfare-admin-token"], deps.adminToken)) {
+    return { status: 401, body: { error: "invalid_admin_token" } };
+  }
+  if (!deps.applyProviders) return { status: 503, body: { error: "reload_unavailable" } };
+
+  let payload: any;
+  try {
+    payload = body ? JSON.parse(body) : {};
+  } catch {
+    return { status: 400, body: { error: "invalid_json" } };
+  }
+
+  // 必须是 Record<string, ProviderConfig>：每个 provider 有非空 baseUrl
+  // （路由必需），upstreamUrl 可选非空字符串。校验错误只回显 code，不回显
+  // provider 名（用户可经对照自己提交的 payload 定位）。
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return { status: 400, body: { error: "invalid_providers_shape" } };
+  }
+  const update: Record<string, ProviderConfig> = {};
+  for (const [name, cfg] of Object.entries(payload)) {
+    if (typeof name !== "string" || name === "") {
+      return { status: 400, body: { error: "invalid_provider_name" } };
+    }
+    if (typeof cfg !== "object" || cfg === null || Array.isArray(cfg)) {
+      return { status: 400, body: { error: "invalid_provider_config" } };
+    }
+    const c = cfg as { baseUrl?: unknown; upstreamUrl?: unknown };
+    if (typeof c.baseUrl !== "string" || c.baseUrl === "") {
+      return { status: 400, body: { error: "base_url_required" } };
+    }
+    if (!isValidHttpUrl(c.baseUrl)) {
+      return { status: 400, body: { error: "invalid_base_url" } };
+    }
+    if (c.upstreamUrl !== undefined && (typeof c.upstreamUrl !== "string" || c.upstreamUrl === "")) {
+      return { status: 400, body: { error: "invalid_upstream_url" } };
+    }
+    if (c.upstreamUrl !== undefined && !isValidHttpUrl(c.upstreamUrl)) {
+      return { status: 400, body: { error: "invalid_upstream_url" } };
+    }
+    update[name] =
+      c.upstreamUrl !== undefined ? { baseUrl: c.baseUrl, upstreamUrl: c.upstreamUrl } : { baseUrl: c.baseUrl };
+  }
+  if (Object.keys(update).length === 0) {
+    return { status: 400, body: { error: "no_providers_provided" } };
+  }
+
+  const result = deps.applyProviders(update);
+  if (!result.ok) return { status: 400, body: { error: result.error } };
+  return { status: 200, body: { ok: true, providers: Object.keys(update) } };
 }

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { adminApi } from "./api";
+import { runningInTauri } from "./ipc";
 import { CostDashboard } from "./pages/CostDashboard";
 import { ModelsPage } from "./pages/ModelsPage";
 import { LogsPage } from "./pages/LogsPage";
@@ -28,19 +29,22 @@ export function App() {
     localStorage.setItem("af-theme", dark ? "dark" : "light");
   }, [dark]);
 
-  // Probe the daemon once on load. The admin endpoints are loopback-only and
-  // only exist when `agentfare proxy` is running — surface that to the user
-  // instead of letting every page fail with an opaque fetch error.
-  useEffect(() => {
-    let cancelled = false;
+  // Probe the loopback daemon. The admin endpoints only exist when the proxy is
+  // running (auto-spawned as a sidecar in Tauri, or `pnpm dev:daemon` in dev) —
+  // surface an offline state instead of letting every page fail with an opaque
+  // fetch error. probeDaemon is reused by the offline banner's "重新检测" button
+  // so the user can retry without leaving the GUI.
+  const probeDaemon = useCallback(() => {
+    setDaemonUp(null);
     adminApi
       .health()
-      .then(() => !cancelled && setDaemonUp(true))
-      .catch(() => !cancelled && setDaemonUp(false));
-    return () => {
-      cancelled = true;
-    };
+      .then(() => setDaemonUp(true))
+      .catch(() => setDaemonUp(false));
   }, []);
+
+  useEffect(() => {
+    probeDaemon();
+  }, [probeDaemon]);
 
   return (
     <div className="app">
@@ -59,7 +63,7 @@ export function App() {
             ? "检测中…"
             : daemonUp
               ? "daemon 在线"
-              : "daemon 离线（请运行 agentfare proxy）"}
+              : "daemon 离线"}
         </span>
         <div className="spacer" />
         <button className="theme-btn" onClick={() => setDark((d) => !d)}>
@@ -81,8 +85,15 @@ export function App() {
         <main className="content">
           {daemonUp === false && (
             <div className="banner warning">
-              代理 daemon 未运行。GUI 读取的成本/日志/模型数据来自
-              <code>agentfare proxy</code>（默认 127.0.0.1:3456），请先启动它。
+              代理 daemon 未运行，GUI 读取的成本 / 日志 / 模型数据均来自本地代理（127.0.0.1:3456）。
+              {runningInTauri()
+                ? "桌面应用通常会自动拉起代理进程；若持续离线，请重启应用，并确认已在「端点配置」配置至少一个 provider 与密钥。"
+                : "开发模式下请启动 daemon（pnpm dev:daemon），或使用桌面应用以自动管理代理。"}
+              <div className="lock-actions" style={{ marginTop: 8 }}>
+                <button className="refresh" onClick={probeDaemon}>
+                  重新检测
+                </button>
+              </div>
             </div>
           )}
           {page === "cost" && <CostDashboard />}

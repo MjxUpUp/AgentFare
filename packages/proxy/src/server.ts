@@ -20,6 +20,7 @@ import {
   type CostTracker,
   type QualitySignalCollector,
   type TrackingDatabase,
+  type ProviderConfig,
 } from "@agentfare/core";
 import { type ModelRegistry, type ModelEntry, findEndpointForProtocol, resolveAuthScheme } from "@agentfare/models";
 import {
@@ -56,6 +57,12 @@ export interface ProxyServerDeps {
   getRouting?: () => import("@agentfare/core").RoutingConfig;
   /** 应用手动锁定 + 热加载配置，供 POST /api/active。 */
   applyLock?: (lock: ActiveLock) => { ok: true } | { ok: false; error: string };
+  /** 持久化 API key 到 keys.json，供 POST /api/keys（GUI 一等公民 A2）。 */
+  saveKeys?: (updates: Record<string, string>) => void;
+  /** 合并 provider 配置进 config.json 并热加载，供 POST /api/providers（A3）。 */
+  applyProviders?: (
+    update: Record<string, ProviderConfig>,
+  ) => { ok: true } | { ok: false; error: string };
 }
 
 export interface ProxyServerOptions {
@@ -184,7 +191,8 @@ function adminResponseCors(
   origin: string | undefined,
 ): Record<string, string> {
   const sensitive =
-    (method === "POST" && pathname === "/api/active") ||
+    (method === "POST" &&
+      (pathname === "/api/active" || pathname === "/api/keys" || pathname === "/api/providers")) ||
     (method === "GET" && pathname === "/api/admin-token");
   return sensitive ? buildAdminCorsHeaders(origin) : READ_ENDPOINT_CORS_HEADERS;
 }
@@ -305,6 +313,12 @@ async function handleRequest(
           providerMap: options.deps.providerMap,
           getRouting: options.deps.getRouting,
           applyLock: options.deps.applyLock,
+          // GUI 一等公民 A2/A3：透传写端点回调到 handleAdminRequest。漏传任一 →
+          // handler 收到 undefined → 503 key_store/reload unavailable。单元测
+          // adminPost 直调 handleAdminRequest 绕过此透传，故 e2e "POST /api/keys
+          // persists keys over HTTP" 是这条透传线的唯一守卫——别再漏。
+          saveKeys: options.deps.saveKeys,
+          applyProviders: options.deps.applyProviders,
           adminToken: options.adminToken,
         },
       ) ?? { status: 404, body: { error: "unknown_admin_endpoint" } };

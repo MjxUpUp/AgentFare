@@ -56,7 +56,7 @@ export function writeShellConfig(content: string): string {
  * Writes to a temp file first, then renames (POSIX atomic).
  * On Windows where cross-drive rename may fail, falls back to copy+unlink.
  */
-function atomicWriteFileSync(targetPath: string, data: string): void {
+export function atomicWriteFileSync(targetPath: string, data: string): void {
   // Place the temp file in the SAME directory as the target so the rename is
   // atomic on POSIX and never hits EXDEV on Windows. os.tmpdir() is usually on
   // a different drive than the shell profile (e.g. C:\...\Temp vs Documents\),

@@ -67,6 +67,18 @@ export interface ProviderInfo {
   upstreamBaseUrl: string;
 }
 
+/** POST /api/providers 请求体里每个 provider 的配置（baseUrl 必填，upstreamUrl 可选）。 */
+export interface ProviderConfigInput {
+  baseUrl: string;
+  upstreamUrl?: string;
+}
+
+/** POST /api/keys 与 /api/providers 的成功响应：回显已写入的 provider 名（不回显值）。 */
+export interface WriteResult {
+  ok: true;
+  providers: string[];
+}
+
 // ── cc-switch 实时锁定（与 packages/proxy/src/admin.ts 的 ActiveLock 对齐）──
 
 export type LockMode = "auto" | "model" | "provider";
@@ -156,6 +168,19 @@ async function postJson<T>(
   );
 }
 
+/**
+ * Two-step admin write: GET /api/admin-token to bootstrap the token, then POST
+ * the payload with x-agentfare-admin-token. Shared by setActive / setKeys /
+ * setProviders — all three follow the same token-gated write contract, so the
+ * bootstrap is centralized here rather than copy-pasted per endpoint.
+ */
+async function adminWrite<T>(path: string, body: unknown): Promise<T> {
+  const { token } = await getJson<{ token: string | null }>("/api/admin-token");
+  const headers: Record<string, string> = {};
+  if (token) headers["x-agentfare-admin-token"] = token;
+  return postJson<T>(path, body, headers);
+}
+
 export const adminApi = {
   health: () =>
     getJson<{ status: string; service: string }>("/health"),
@@ -181,10 +206,15 @@ export const adminApi = {
    * /api/admin-token bootstrap token，再带 x-agentfare-admin-token 头发 POST。
    * daemon 收到后热加载 config，下一个请求即按新锁定路由——无需重启。
    */
-  setActive: async (lock: ActiveLockRequest): Promise<ActiveLockResponse> => {
-    const { token } = await getJson<{ token: string | null }>("/api/admin-token");
-    const headers: Record<string, string> = {};
-    if (token) headers["x-agentfare-admin-token"] = token;
-    return postJson<ActiveLockResponse>("/api/active", lock, headers);
-  },
+  setActive: (lock: ActiveLockRequest): Promise<ActiveLockResponse> =>
+    adminWrite<ActiveLockResponse>("/api/active", lock),
+
+  /** POST /api/keys — 持久化 API 密钥到 keys.json，热加载后下一请求即按新 key 转发。 */
+  setKeys: (keys: Record<string, string>): Promise<WriteResult> =>
+    adminWrite<WriteResult>("/api/keys", keys),
+
+  /** POST /api/providers — 合并 provider 配置（baseUrl[/upstreamUrl]）进 config.json 并热加载。 */
+  setProviders: (
+    providers: Record<string, ProviderConfigInput>,
+  ): Promise<WriteResult> => adminWrite<WriteResult>("/api/providers", providers),
 };

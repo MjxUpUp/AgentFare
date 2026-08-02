@@ -43,6 +43,17 @@ if (!fs.existsSync(daemonMjs)) {
   process.exit(1);
 }
 
+// GUI-side setup CLI (shell takeover/restore). Bundled by esbuild from
+// packages/setup/src/cli.ts — see scripts/bundle-cli.mjs. Spawned by the Rust
+// IPC commands (lib.rs setup_cli_entry → sidecar/setup-cli.mjs in release).
+const setupCliMjs = path.resolve(guiRoot, "../setup/dist/setup-cli.mjs");
+if (!fs.existsSync(setupCliMjs)) {
+  console.error(
+    `[assemble-sidecar] missing ${setupCliMjs} — run "pnpm --filter @agentfare/setup bundle:cli" first.`,
+  );
+  process.exit(1);
+}
+
 // Resolve the three native-adjacent packages the SAME way the daemon resolves
 // them at runtime: createRequire rooted at better-sqlite3's lib/database.js,
 // then file-uri-to-path rooted at bindings/bindings.js. Hardcoding the pnpm
@@ -96,6 +107,10 @@ function copy(src, dest, opts = {}) {
 
 // 1. daemon bundle
 copy(daemonMjs, path.join(outDir, "daemon.mjs"));
+
+// 1b. GUI-side setup CLI (shell takeover/restore) — spawned by the Rust IPC
+//     commands in release (lib.rs setup_cli_entry → sidecar/setup-cli.mjs).
+copy(setupCliMjs, path.join(outDir, "setup-cli.mjs"));
 
 // 2. Node runtime (the building platform's node — per-platform in CI)
 const nodeDest = path.join(outDir, process.platform === "win32" ? "node.exe" : "node");

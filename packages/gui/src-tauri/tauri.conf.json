@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm -w build && pnpm --filter @agentfare/proxy bundle:daemon && node scripts/assemble-sidecar.mjs"
+    "beforeBuildCommand": "pnpm -w build && pnpm --filter @agentfare/proxy bundle:daemon && pnpm --filter @agentfare/setup bundle:cli && node scripts/assemble-sidecar.mjs"
   },
   "app": {
     "windows": [

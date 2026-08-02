@@ -10,6 +10,7 @@ export type {
   RoutingConfig,
   CrossProviderMode,
   EnterpriseProviderConfig,
+  ProviderConfig,
   TrackingConfig,
   OnlineLearningConfig,
 } from "./config/types.js";
