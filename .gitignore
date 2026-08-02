@@ -13,3 +13,12 @@ e2e/package-lock.json
 
 # Forge runtime artifacts (task state, reviews, sessions, hooks) — not source
 .forge/
+
+# Local IDE / agent tooling & scratch (not source)
+.ccg/
+.cursor/
+.dev-workbench/
+.playwright-mcp/
+.research/
+prototype/
+mcp-servers.toml
