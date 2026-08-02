@@ -69,6 +69,47 @@ export class Router {
       });
     }
 
+    // --- cc-switch 手动锁定短路 ---
+    // lockMode !== "auto" 时跳过自动 tier 分析，直接锁定到用户指定的 model/provider。
+    // 这是"实时切换"的核心：GUI POST /api/active 改写 routing.lockMode/activeModel 后，
+    // 下一个请求即按锁定值路由，无需重启 daemon。锁定目标缺失时静默降级到自动路由
+    // （避免一个写错的 activeModel 把全部请求打成 404）。
+    const lockMode = this.config.routing.lockMode ?? "auto";
+    if (lockMode === "model" && this.config.routing.activeModel) {
+      const locked = this.registry.get(this.config.routing.activeModel);
+      if (locked) {
+        return enrich({
+          targetModel: locked,
+          providerSwitched: locked.provider !== originalProvider,
+          // L2: 报 "lock" 而非 config 策略——锁定态短路了 crossProvider 策略，
+          // providerSwitched=true 配 crossProviderMode='off' 是自相矛盾的 telemetry。
+          crossProviderMode: "lock",
+          reasoning: `手动锁定模型 ${locked.id}（lockMode=model）`,
+        });
+      }
+      // locked 缺失 → 落入下方自动路由（安全降级，见 72-76 注释；router.test 覆盖）。
+    } else if (lockMode === "provider" && this.config.routing.activeProvider) {
+      const lockedProvider = this.config.routing.activeProvider;
+      const lockedModel = findSameProviderModel(
+        this.registry,
+        lockedProvider,
+        analysis.recommendedTier,
+        this.config.routing.defaultStrategy,
+      );
+      if (lockedModel) {
+        return enrich({
+          targetModel: lockedModel,
+          providerSwitched: lockedProvider !== originalProvider,
+          crossProviderMode: "lock", // L2: 同上，锁定态报 "lock"
+          reasoning: `手动锁定 provider ${lockedProvider}（lockMode=provider）`,
+        });
+      }
+      // L3: lockedModel 缺失（该 provider 无 recommendedTier 模型）→ 落入下方自动
+      // 路由（可能跳回原 provider）。这是安全 fallback（避免 404），但"锁 provider
+      // 却跳走"对用户不透明，且 reasoning 不标注降级。TODO follow-up：该 provider
+      // 内取任意 tier 模型而非跳自动；当前属已知 UX 缺口，非阻断。
+    }
+
     const tier = analysis.recommendedTier;
 
     // If recommended model is already same provider

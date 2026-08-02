@@ -13,6 +13,7 @@ export const DEFAULT_CONFIG: AgentFareConfig = {
     crossProvider: "off",
     crossProviderProviders: [],
     enterpriseProviders: {},
+    lockMode: "auto",
   },
   providers: {
     openai:    { baseUrl: "https://api.openai.com/v1" },

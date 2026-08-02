@@ -5,14 +5,24 @@
  * It initializes all dependencies, starts the proxy server, and keeps
  * running until signaled to stop.
  *
+ * cc-switch 支持：维护一个可变的依赖容器（handler/registry/providerMap）。
+ * admin POST /api/active → applyLock → reloadConfig 在运行时替换这些依赖，
+ * 使 GUI 一键切换模型后下一个请求即按新锁定路由，无需重启 daemon。DB 和
+ * costTracker 不随热加载重建（同一 SQLite 文件，复用连接）。
+ *
  * Usage: node dist/daemon-entry.js --port <port>
  */
 
-import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollector, setLogger } from "@agentfare/core";
-import { ModelRegistry, getDbPath, DEFAULT_PROXY_PORT } from "@agentfare/models";
+import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { loadConfigFromDisk, TrackingDatabase, CostTracker, QualitySignalCollector, setLogger, atomicWriteFileSync } from "@agentfare/core";
+import { ModelRegistry, getDbPath, DEFAULT_PROXY_PORT, getConfigPath } from "@agentfare/models";
 import { RequestHandler } from "@agentfare/hook/request-handler";
-import { startProxy } from "./lifecycle.js";
+import { startProxy, readProxyState } from "./lifecycle.js";
 import { buildProviderMap } from "./provider-map.js";
+import type { ActiveLock } from "./admin.js";
+import { buildLockedConfigJson } from "./lock-config.js";
 
 // Daemon owns the process — enable stderr logging (stdout may be piped to log file)
 setLogger({
@@ -35,36 +45,73 @@ function parsePort(): number {
 async function main(): Promise<void> {
   const port = parsePort();
 
-  // Initialize deps (mirrors packages/cli/src/commands/proxy.ts)
-  const config = loadConfigFromDisk();
-  const registry = new ModelRegistry(config.customModels);
-  const handler = new RequestHandler(config, registry);
+  // Admin token：复用旧 proxy.json 的 token（若有），否则生成新的。复用保证
+  // daemon 重启后 GUI 缓存的 token 仍有效，避免每次重启都要重新 bootstrap。
+  const existingState = readProxyState();
+  const adminToken = existingState?.adminToken ?? randomUUID();
 
-  // ISSUE-106: Build dynamic provider map from config (supports user's custom upstream URLs)
-  const providerMap = buildProviderMap(config);
-
+  // 持久化的 DB / tracker 不随配置热加载重建（同一 SQLite 文件，复用连接）。
   const dbPath = getDbPath();
   const db = new TrackingDatabase(dbPath);
   const costTracker = new CostTracker(db);
   const qualitySignalCollector = new QualitySignalCollector();
 
-  process.on("exit", () => {
-    try { db.close(); } catch {}
-  });
+  // 可变依赖容器：reloadConfig 替换 handler/registry/providerMap 属性，server 经
+  // options.deps 引用读到最新值（server.ts handleRequest 每次读 options.deps.*）。
+  // 原子性来自 reloadConfig 是全同步块 ⇒ JS 事件循环 run-to-completion ⇒ 正在
+  // 处理的请求读到 old 或 new 的一致快照，不会读到半更新的 deps。这套"sync-only =
+  // 原子"不变式依赖 reloadConfig 全程同步——未来若改成 async 文件 IO（fs/promises）
+  // 会破坏原子性，届时需加串行化 mutex。sync-only invariant — async here breaks
+  // the atomic swap (also M1).
+  let currentConfig = loadConfigFromDisk();
+  const deps = {
+    handler: new RequestHandler(currentConfig, new ModelRegistry(currentConfig.customModels)),
+    registry: new ModelRegistry(currentConfig.customModels),
+    providerMap: buildProviderMap(currentConfig),
+    costTracker,
+    qualitySignalCollector,
+    db,
+    getRouting: () => currentConfig.routing,
+    applyLock: (lock: ActiveLock): { ok: true } | { ok: false; error: string } => {
+      try {
+        const configPath = getConfigPath();
+        const existing = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : null;
+        // 纯函数：把 lock 合并进 routing（保留其余字段），corrupt config 拒绝写（H2，
+        // 不再 partial={} 吞掉 providers/customModels）。清残留 / 保留非 routing 字段
+        // 的不变式由 lock-config.test.ts 覆盖，这里只做 IO + reload。
+        const built = buildLockedConfigJson(existing, lock);
+        if (!built.ok) return { ok: false, error: built.error };
+        fs.mkdirSync(path.dirname(configPath), { recursive: true });
+        // M4: 写前备份上一个 config，坏写可回滚；仅在覆盖既有文件时。
+        if (existing !== null) {
+          fs.copyFileSync(configPath, configPath + ".bak");
+        }
+        atomicWriteFileSync(configPath, built.content);
+        reloadConfig();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  };
 
-  process.on("SIGTERM", () => {
-    try { db.close(); } catch {}
-    process.exit(0);
-  });
+  /** 重新从磁盘加载 config 并重建可路由依赖（handler/registry/providerMap）。 */
+  function reloadConfig(): void {
+    currentConfig = loadConfigFromDisk();
+    const registry = new ModelRegistry(currentConfig.customModels);
+    deps.handler = new RequestHandler(currentConfig, registry);
+    deps.registry = registry;
+    deps.providerMap = buildProviderMap(currentConfig);
+  }
 
-  process.on("SIGINT", () => {
-    try { db.close(); } catch {}
-    process.exit(0);
-  });
+  process.on("exit", () => { try { db.close(); } catch {} });
+  process.on("SIGTERM", () => { try { db.close(); } catch {}; process.exit(0); });
+  process.on("SIGINT", () => { try { db.close(); } catch {}; process.exit(0); });
 
   const result = await startProxy({
     port,
-    deps: { handler, costTracker, qualitySignalCollector, registry, providerMap, db },
+    deps,
+    adminToken,
   });
 
   if (!result.success) {

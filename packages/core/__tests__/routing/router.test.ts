@@ -263,6 +263,86 @@ describe("Router", () => {
     expect(result.tier).toBe("standard");
     expect(result.failoverCandidates).toBeUndefined();
   });
+
+  // --- cc-switch 手动锁定（lockMode）---
+  it("lockMode=model locks to activeModel across providers (cc-switch)", () => {
+    const router = makeRouter({
+      routing: {
+        ...DEFAULT_CONFIG.routing,
+        crossProvider: "off", // 锁定必须优先生效，即使策略关跨 provider
+        lockMode: "model",
+        activeModel: "deepseek/v4-pro",
+      },
+    });
+    const analysis = makeAnalysis({ recommendedTier: "fast", recommendedModel: "" });
+    const result = router.decide("https://api.openai.com/v1/chat/completions", analysis);
+    expect(result.targetModel!.id).toBe("deepseek/v4-pro");
+    expect(result.targetModel!.provider).toBe("deepseek");
+    expect(result.providerSwitched).toBe(true); // openai → deepseek
+    expect(result.reasoning).toContain("lockMode=model");
+  });
+
+  it("lockMode=model with unknown activeModel silently falls back to auto routing", () => {
+    const router = makeRouter({
+      routing: { ...DEFAULT_CONFIG.routing, lockMode: "model", activeModel: "nonexistent/model" },
+    });
+    const result = router.decide(
+      "https://api.openai.com/v1/chat/completions",
+      makeAnalysis({ recommendedTier: "fast" }),
+    );
+    // 锁定目标缺失 → 降级自动同 provider 路由，绝不返回 null 把请求打成 404
+    expect(result.targetModel).not.toBeNull();
+    expect(result.targetModel!.provider).toBe("openai");
+  });
+
+  it("lockMode=provider locks to activeProvider (picks tier model within provider)", () => {
+    const router = makeRouter({
+      routing: {
+        ...DEFAULT_CONFIG.routing,
+        crossProvider: "off",
+        lockMode: "provider",
+        activeProvider: "anthropic",
+      },
+    });
+    const result = router.decide(
+      "https://api.openai.com/v1/chat/completions",
+      makeAnalysis({ recommendedTier: "standard" }),
+    );
+    expect(result.targetModel!.provider).toBe("anthropic");
+    expect(result.providerSwitched).toBe(true); // openai → anthropic
+    expect(result.reasoning).toContain("lockMode=provider");
+  });
+
+  it("lockMode=auto (default) keeps automatic routing unchanged", () => {
+    const router = makeRouter(); // DEFAULT_CONFIG.routing.lockMode === "auto"
+    const result = router.decide(
+      "https://api.openai.com/v1/chat/completions",
+      makeAnalysis({ recommendedTier: "fast" }),
+    );
+    expect(result.targetModel!.provider).toBe("openai");
+    expect(result.providerSwitched).toBe(false);
+  });
+
+  it("lockMode reports crossProviderMode='lock' so telemetry never contradicts providerSwitched (L2)", () => {
+    // L2: 锁定态短路了 crossProvider 策略，crossProviderMode 应报 "lock" 而非 config
+    // 值。否则 providerSwitched=true 与 crossProviderMode='off' 自相矛盾。字段语义
+    // 分层：crossProviderMode=配置策略镜像（自动路由）/ "lock"（手动锁定短路），
+    // providerSwitched=实际是否跨 provider，reasoning=锁定态标注。
+    const router = makeRouter({
+      routing: {
+        ...DEFAULT_CONFIG.routing,
+        crossProvider: "off", // 即便策略关跨 provider，锁定仍跨 provider
+        lockMode: "model",
+        activeModel: "deepseek/v4-pro",
+      },
+    });
+    const result = router.decide(
+      "https://api.openai.com/v1/chat/completions",
+      makeAnalysis({ recommendedTier: "fast", recommendedModel: "" }),
+    );
+    expect(result.providerSwitched).toBe(true); // openai → deepseek
+    expect(result.crossProviderMode).toBe("lock");
+  });
 });
 
 describe("Router — enterprise and cross-provider integration", () => {

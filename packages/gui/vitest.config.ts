@@ -1,13 +1,18 @@
 import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
 
-// The GUI runs in the browser, but src/api.ts is pure fetch-based logic that
-// is fully testable under node (node 18+ has a global fetch). Component tests
-// (App/pages) would need jsdom + @testing-library — left as a follow-up; the
-// data contract with the daemon is the highest-risk surface and lives here.
+// Two test environments coexist:
+//  - api.test.ts / utils.test.ts run under node (pure fetch-mock logic)
+//  - *.test.tsx component tests run under jsdom via a per-file
+//    `// @vitest-environment jsdom` pragma (so node tests stay unaffected).
+// plugin-react is required for the tsx tests' JSX transform; the root
+// vitest.config.ts has no such plugin, so gui tsx tests MUST run under this
+// config (via `pnpm --filter @agentfare/gui test`), not the root one.
 export default defineConfig({
+  plugins: [react()],
   test: {
     environment: "node",
     globals: true,
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
   },
 });
